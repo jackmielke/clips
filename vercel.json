@@ -1,0 +1,4 @@
+{
+  "outputDirectory": "public",
+  "rewrites": [{ "source": "/:slug([0-9a-f]{8})", "destination": "/api/page?slug=:slug" }]
+}

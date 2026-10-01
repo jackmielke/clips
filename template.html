@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{TITLE}}</title>
+<meta name="clip-title" content="{{TITLE}}">
+<meta property="og:title" content="{{TITLE}}">
+<meta property="og:description" content="A video from Jack Mielke · {{DURATION}}">
+<meta property="og:image" content="{{ORIGIN}}/v/{{SLUG}}/poster.jpg">
+<meta property="og:type" content="video.other">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="/jm-logo.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#f6f5f2; --fg:#16161a; --muted:#6b6b73; --card:#ffffff; --line:#e4e2dc; --accent:#16161a; --accent-fg:#fff; --save-bg:#e3f5e8; --save-fg:#1d7a3e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f0f11; --fg:#f2f2f3; --muted:#9a9aa3; --card:#18181b; --line:#2a2a2f; --accent:#f2f2f3; --accent-fg:#0f0f11; --save-bg:#173322; --save-fg:#6fdc96; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:Inter, system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+  main { max-width:1180px; margin:0 auto; padding:32px 16px 64px; }
+  .player { border-radius:16px; overflow:hidden; background:#000; box-shadow:0 20px 60px -20px rgba(0,0,0,.35); aspect-ratio:{{ASPECT}}; }
+  video { width:100%; height:100%; display:block; background:#000; }
+  .bar { display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; margin-top:20px; }
+  h1[contenteditable=true] { outline:none; border-radius:8px; margin-left:-6px; padding:0 6px; cursor:text; }
+  h1[contenteditable=true]:hover, h1[contenteditable=true]:focus { background:var(--card); box-shadow:0 0 0 1px var(--line); }
+  .saved { color:var(--muted); font-size:12px; margin-left:8px; }
+  h1 { font-size:22px; font-weight:600; margin:0 0 4px; letter-spacing:-.01em; }
+  .meta { color:var(--muted); font-size:14px; }
+  .speeds { display:flex; gap:4px; background:var(--card); border:1px solid var(--line); border-radius:999px; padding:4px; }
+  .speeds button { border:0; background:transparent; color:var(--fg); font:500 14px Inter, sans-serif; padding:8px 12px; border-radius:999px; cursor:pointer; min-width:52px; }
+  .speeds button.on { background:var(--accent); color:var(--accent-fg); }
+  .actions { display:flex; gap:8px; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); font:500 14px Inter, sans-serif; padding:9px 14px; border-radius:999px; cursor:pointer; text-decoration:none; }
+  .speedcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .saving { font-size:13px; color:var(--muted); min-height:18px; font-variant-numeric:tabular-nums; transition:opacity .25s; }
+  .saving b { font-weight:600; color:var(--fg); }
+  .saving .pill { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; background:var(--save-bg); color:var(--save-fg); font-weight:600; font-size:12px; }
+  .hint { color:var(--muted); font-size:12px; margin-top:16px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="player"><video id="v" controls playsinline preload="metadata" poster="/v/{{SLUG}}/poster.jpg"></video></div>
+  <div class="bar">
+    <div><h1 id="title" spellcheck="false">{{TITLE}}</h1><div class="meta">{{DATE}} · {{DURATION}}<span class="saved" id="saved"></span></div></div>
+    <div class="speedcol"><div class="speeds" id="speeds"></div><div class="saving" id="saving"></div></div>
+    <div class="actions"><button class="btn" id="copy">Copy link</button></div>
+  </div>
+  <div class="hint">Shortcuts: space play/pause · ← → skip 5s · &lt; &gt; change speed</div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<script>
+  const v = document.getElementById('v');
+  const src = '/v/{{SLUG}}/index.m3u8';
+  // Prefer hls.js wherever it works (Chrome's newer native HLS has dropped audio); native only for iOS Safari.
+  if (window.Hls && Hls.isSupported()) { const h = new Hls(); h.loadSource(src); h.attachMedia(v); }
+  else v.src = src;
+
+  const SPEEDS = [1, 1.25, 1.5, 1.75, 2];
+  let speed = 1.25;
+  try { const s = parseFloat(localStorage.getItem('clipSpeed')); if (SPEEDS.includes(s)) speed = s; } catch (e) {}
+  const wrap = document.getElementById('speeds');
+  const fmt = (t) => { t = Math.round(t); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
+  function showSaving() {
+    const el = document.getElementById('saving');
+    const d = (isFinite(v.duration) && v.duration) || {{SECS}};
+    if (speed === 1) { el.innerHTML = 'Watch in <b>' + fmt(d) + '</b>'; return; }
+    el.innerHTML = 'Watch in <b>' + fmt(d / speed) + '</b><span class="pill">saves ' + fmt(d - d / speed) + '</span>';
+  }
+  v.addEventListener('durationchange', showSaving);
+  function setSpeed(s) {
+    speed = s; v.playbackRate = s; v.defaultPlaybackRate = s;
+    try { localStorage.setItem('clipSpeed', s); } catch (e) {}
+    [...wrap.children].forEach(b => b.classList.toggle('on', parseFloat(b.dataset.s) === s));
+    showSaving();
+  }
+  SPEEDS.forEach(s => { const b = document.createElement('button'); b.textContent = s + '×'; b.dataset.s = s; b.onclick = () => setSpeed(s); wrap.appendChild(b); });
+  setSpeed(speed);
+  v.addEventListener('play', () => { if (v.playbackRate !== speed) v.playbackRate = speed; });
+  v.addEventListener('loadedmetadata', () => { v.playbackRate = speed; });
+
+  document.getElementById('copy').onclick = async (e) => {
+    try { await navigator.clipboard.writeText(location.href); e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy link', 1500); } catch (err) {}
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    const i = SPEEDS.indexOf(speed);
+    if (e.key === ' ' && e.target === document.body) { e.preventDefault(); v.paused ? v.play() : v.pause(); }
+    else if (e.key === 'ArrowRight' && e.target !== v) v.currentTime += 5;
+    else if (e.key === 'ArrowLeft' && e.target !== v) v.currentTime -= 5;
+    else if (e.key === '>' || e.key === '.') setSpeed(SPEEDS[Math.min(i + 1, SPEEDS.length - 1)]);
+    else if (e.key === '<' || e.key === ',') setSpeed(SPEEDS[Math.max(i - 1, 0)]);
+  });
+
+  // Owner editing: open any clip once with ?key=<admin key> and this browser stays signed in.
+  (async () => {
+    const SLUG = '{{SLUG}}';
+    const params = new URLSearchParams(location.search);
+    let key = params.get('key');
+    try { if (key) localStorage.setItem('clipKey', key); else key = localStorage.getItem('clipKey'); } catch (e) {}
+    if (params.has('key')) history.replaceState(null, '', location.pathname);
+    if (!key) return;
+    const auth = { Authorization: 'Bearer ' + key };
+    const ok = await fetch('/api/title', { headers: auth }).then(r => r.ok).catch(() => false);
+    if (!ok) { try { localStorage.removeItem('clipKey'); } catch (e) {} return; }
+    const h = document.getElementById('title'), saved = document.getElementById('saved');
+    h.contentEditable = 'true'; h.title = 'Click to rename';
+    let last = h.textContent.trim();
+    h.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); h.blur(); } if (e.key === 'Escape') { h.textContent = last; h.blur(); } });
+    h.addEventListener('blur', async () => {
+      const t = h.textContent.replace(/\s+/g, ' ').trim();
+      if (!t) { h.textContent = last; return; }
+      if (t === last) return;
+      saved.textContent = ' · Saving…';
+      const r = await fetch('/api/title', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: SLUG, title: t }) }).catch(() => null);
+      if (r && r.ok) { last = t; document.title = t; saved.textContent = ' · Saved'; setTimeout(() => saved.textContent = '', 1500); }
+      else saved.textContent = ' · Couldn\'t save';
+    });
+  })();
+</script>
+</body>
+</html>
