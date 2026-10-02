@@ -1,4 +1,14 @@
 {
   "outputDirectory": "public",
-  "rewrites": [{ "source": "/:slug([0-9a-f]{8})", "destination": "/api/page?slug=:slug" }]
+  "rewrites": [
+    {
+      "source": "/:slug([0-9a-f]{8})",
+      "destination": "/api/page?slug=:slug"
+    }
+  ],
+  "functions": {
+    "api/library.js": {
+      "includeFiles": "api/_clips.json"
+    }
+  }
 }
