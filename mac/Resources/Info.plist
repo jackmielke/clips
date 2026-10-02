@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Clips</string>
+  <key>CFBundleDisplayName</key><string>Clips</string>
+  <key>CFBundleIdentifier</key><string>com.jackmielke.clips</string>
+  <key>CFBundleExecutable</key><string>Clips</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>LSMinimumSystemVersion</key><string>15.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array><dict><key>CFBundleURLName</key><string>Clips</string><key>CFBundleURLSchemes</key><array><string>clips</string></array></dict></array>
+  <key>NSCameraUsageDescription</key><string>Clips records your camera into the corner of your video.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Clips records your voice over your screen.</string>
+  <key>NSScreenCaptureUsageDescription</key><string>Clips records your screen.</string>
+</dict>
+</plist>

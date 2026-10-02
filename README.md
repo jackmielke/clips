@@ -20,3 +20,9 @@ vercel env add ADMIN_KEY production   # any long random string; keep a copy in .
 CLIPS_ORIGIN=https://your-domain ./post-latest.sh "My first clip"
 ```
 Needs ffmpeg (with VideoToolbox, so macOS) and Python 3.
+
+## Library
+`/library` lists every clip for whoever holds the key (same `?key=` sign-in). The list comes from `api/_clips.json`, which `add-clip.sh` updates and which is bundled into the function, so it is never served as a public file. It is gitignored like the clips themselves.
+
+## Mac app (`mac/`)
+A native recorder: a floating dark-glass bar (display, camera, mic and computer-audio toggles, Record), a live camera bubble you can drag, and a 3-2-1 countdown. Finish posts the clip and copies the link. ⌥⇧R toggles recording from anywhere, and `open clips://toggle|start|stop` does the same from scripts. It writes the Screen Studio folder layout to `~/Movies/Clips/`, so `render.py` handles both recorders. Build with `mac/build.sh` (installs to /Applications). It needs Screen Recording permission added with the + button in System Settings.

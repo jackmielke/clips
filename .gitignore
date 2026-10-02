@@ -6,3 +6,4 @@ node_modules
 # clip content (may show client data) stays local; it is deployed straight from disk
 public/v/
 public/c/
+api/_clips.json

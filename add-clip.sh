@@ -19,6 +19,7 @@ DATE=$(date -r "$IN" "+%b %-d, %Y")
 mkdir -p public/c
 sed -e "s|{{TITLE}}|$TITLE|g" -e "s|{{SLUG}}|$SLUG|g" -e "s|{{ORIGIN}}|$ORIGIN|g" -e "s|{{DURATION}}|$DUR|g" \
     -e "s|{{DATE}}|$DATE|g" -e "s|{{SECS}}|$SECS|g" -e "s|{{ASPECT}}|$W / $H|g" template.html > "public/c/$SLUG.html"
+python3 register-clip.py "$SLUG" "$TITLE" "$SECS" "$W" "$H" "$(date -r "$IN" -u +%Y-%m-%dT%H:%M:%SZ)"
 [ -f public/index.html ] || echo '<!doctype html><meta name="robots" content="noindex"><title>Clips</title>' > public/index.html
 npx --yes vercel@latest deploy --prod --yes >/dev/null
 echo "$ORIGIN/$SLUG"
