@@ -47,7 +47,7 @@
   <div class="bar">
     <div><h1 id="title" spellcheck="false">{{TITLE}}</h1><div class="meta">{{DATE}} · {{DURATION}}<span class="saved" id="saved"></span></div></div>
     <div class="speedcol"><div class="speeds" id="speeds"></div><div class="saving" id="saving"></div></div>
-    <div class="actions"><button class="btn" id="copy">Copy link</button></div>
+    <div class="actions"><button class="btn" id="save">Save video</button><button class="btn" id="copy">Copy link</button></div>
   </div>
   <div class="hint">Shortcuts: space play/pause · ← → skip 5s · &lt; &gt; change speed</div>
 </main>
@@ -118,6 +118,30 @@
       const r = await fetch('/api/title', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: SLUG, title: t }) }).catch(() => null);
       if (r && r.ok) { last = t; document.title = t; saved.textContent = ' · Saved'; setTimeout(() => saved.textContent = '', 1500); }
       else saved.textContent = ' · Couldn\'t save';
+    });
+  })();
+<script>
+  // Save video: phones get the share sheet (Save Video / AirDrop / Messages); desktops get a download.
+  // Safari only opens the share sheet straight from a tap, so the first tap fetches, the second shares.
+  (() => {
+    const btn = document.getElementById('save'), url = '/v/{{SLUG}}/save.mp4';
+    const name = (document.title || 'clip').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') + '.mp4';
+    let file = null;
+    const canShareFiles = () => { try { return !!navigator.canShare && navigator.canShare({ files: [new File([''], 'x.mp4', { type: 'video/mp4' })] }); } catch (e) { return false; } };
+    btn.addEventListener('click', async () => {
+      if (!canShareFiles()) { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); return; }
+      if (file) {
+        try { await navigator.share({ files: [file], title: document.title }); } catch (e) {}
+        return;
+      }
+      btn.disabled = true; btn.textContent = 'Preparing…';
+      try {
+        const blob = await fetch(url).then((r) => { if (!r.ok) throw new Error(r.status); return r.blob(); });
+        file = new File([blob], name, { type: 'video/mp4' });
+        btn.textContent = 'Save to Photos';
+        try { await navigator.share({ files: [file], title: document.title }); } catch (e) {}
+      } catch (e) { btn.textContent = "Couldn't load, try again"; }
+      btn.disabled = false;
     });
   })();
 </script>
