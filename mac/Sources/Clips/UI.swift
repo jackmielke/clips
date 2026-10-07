@@ -117,6 +117,13 @@ struct ControlBar: View {
             Text("Link copied").font(.system(size: 13, weight: .semibold)).padding(.trailing, 4)
             PillButton(text: "Open") { NSWorkspace.shared.open(url) }
             PillButton(text: "New") { m.reset() }
+            if let f = m.lastFolder {
+                IconButton(icon: "folder", on: true, help: "Show the saved video in Finder", dim: true) {
+                    let mp4 = f.appendingPathComponent("clip.mp4")
+                    NSWorkspace.shared.activateFileViewerSelecting([FileManager.default.fileExists(atPath: mp4.path) ? mp4 : f])
+                }
+            }
+            IconButton(icon: "xmark", on: true, help: "Close", dim: true) { m.reset(); hide() }
         }
     }
 
