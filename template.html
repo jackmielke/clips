@@ -73,7 +73,7 @@
   v.addEventListener('durationchange', showSaving);
   function setSpeed(s) {
     speed = s; v.playbackRate = s; v.defaultPlaybackRate = s;
-    try { localStorage.setItem('clipSpeed', s); } catch (e) {}
+    if (typeof FIXED_SPEED === 'undefined') { try { localStorage.setItem('clipSpeed', s); } catch (e) {} }
     [...wrap.children].forEach(b => b.classList.toggle('on', parseFloat(b.dataset.s) === s));
     showSaving();
   }
@@ -120,6 +120,7 @@
       else saved.textContent = ' · Couldn\'t save';
     });
   })();
+</script>
 <script>
   // Save video: phones get the share sheet (Save Video / AirDrop / Messages); desktops get a download.
   // Safari only opens the share sheet straight from a tap, so the first tap fetches, the second shares.
@@ -136,7 +137,11 @@
       }
       btn.disabled = true; btn.textContent = 'Preparing…';
       try {
-        const blob = await fetch(url).then((r) => { if (!r.ok) throw new Error(r.status); return r.blob(); });
+        const r = await fetch(url); if (!r.ok) throw new Error(r.status);
+        const total = +r.headers.get('content-length') || 0, reader = r.body.getReader(), parts = []; let got = 0;
+        for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length;
+          if (total) btn.textContent = 'Preparing ' + Math.round(got / total * 100) + '%'; }
+        const blob = new Blob(parts, { type: 'video/mp4' });
         file = new File([blob], name, { type: 'video/mp4' });
         btn.textContent = 'Save to Photos';
         try { await navigator.share({ files: [file], title: document.title }); } catch (e) {}
