@@ -14,7 +14,7 @@ struct ControlBar: View {
             case .countdown(let n): countdown(n)
             case .recording: recording
             case .posting(let stage, let progress): posting(stage, progress)
-            case .done(let url): done(url)
+            case .done(let url): DoneBar(m: m, url: url, hide: hide)
             case .failed(let msg): failed(msg)
             }
         }
@@ -118,23 +118,6 @@ struct ControlBar: View {
         }.padding(.horizontal, 12)
     }
 
-    private func done(_ url: URL) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 17)).foregroundStyle(Color(red: 0.36, green: 0.86, blue: 0.55))
-                .padding(.leading, 8)
-            Text("Link copied").font(.system(size: 13, weight: .semibold)).padding(.trailing, 4)
-            PillButton(text: "Open") { NSWorkspace.shared.open(url) }
-            PillButton(text: "New") { m.reset() }
-            if let f = m.lastFolder {
-                IconButton(icon: "folder", on: true, help: "Show the saved video in Finder", dim: true) {
-                    let mp4 = f.appendingPathComponent("clip.mp4")
-                    NSWorkspace.shared.activateFileViewerSelecting([FileManager.default.fileExists(atPath: mp4.path) ? mp4 : f])
-                }
-            }
-            IconButton(icon: "xmark", on: true, help: "Close", dim: true) { m.reset(); hide() }
-        }
-    }
-
     private func failed(_ msg: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow).padding(.leading, 8)
@@ -175,6 +158,77 @@ struct ControlBar: View {
 
     private func shortName(_ s: String) -> String {
         s.replacingOccurrences(of: "Built-in ", with: "").replacingOccurrences(of: " Display", with: "")
+    }
+}
+
+// MARK: - Done
+
+/// After posting: the link is already on the clipboard. Name the clip, copy the link again, or open it.
+struct DoneBar: View {
+    @ObservedObject var m: AppModel
+    let url: URL
+    var hide: () -> Void
+    @State private var draft = ""
+    @State private var copied = true      // posting just copied it
+    @State private var saved: Bool?
+    @FocusState private var editing: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 17)).foregroundStyle(Color(red: 0.36, green: 0.86, blue: 0.55))
+                .padding(.leading, 8)
+            if m.canRename {
+                TextField("Name this clip", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, weight: .semibold))
+                    .focused($editing)
+                    .onSubmit(save)
+                    .padding(.horizontal, 10).frame(width: 230, height: 30)
+                    .background(Capsule().fill(.white.opacity(editing ? 0.14 : 0.07)))
+                    .overlay(alignment: .trailing) {
+                        if let saved {
+                            Image(systemName: saved ? "checkmark" : "exclamationmark.triangle.fill")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(saved ? Color(red: 0.36, green: 0.86, blue: 0.55) : .yellow)
+                                .padding(.trailing, 10)
+                                .help(saved ? "Renamed" : "Couldn't rename")
+                        }
+                    }
+                    .help("Press Return to rename the clip")
+            } else {
+                Text("Link ready").font(.system(size: 13, weight: .semibold)).padding(.trailing, 4)
+            }
+            PillButton(text: copied ? "Copied" : "Copy link") {
+                m.copyLink()
+                flashCopied()
+            }
+            PillButton(text: "Open") { NSWorkspace.shared.open(url) }
+            PillButton(text: "New") { m.reset() }
+            if let f = m.lastFolder {
+                IconButton(icon: "folder", on: true, help: "Show the saved video in Finder", dim: true) {
+                    let mp4 = f.appendingPathComponent("clip.mp4")
+                    NSWorkspace.shared.activateFileViewerSelecting([FileManager.default.fileExists(atPath: mp4.path) ? mp4 : f])
+                }
+            }
+            IconButton(icon: "xmark", on: true, help: "Close", dim: true) { m.reset(); hide() }
+        }
+        .onAppear { draft = m.clipTitle; flashCopied() }
+        .onChange(of: draft) { saved = nil }
+    }
+
+    private func flashCopied() {
+        copied = true
+        Task { try? await Task.sleep(for: .seconds(2)); copied = false }
+    }
+
+    private func save() {
+        let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t != m.clipTitle else { editing = false; return }
+        Task {
+            let ok = await m.rename(t)
+            saved = ok
+            if ok { editing = false }
+        }
     }
 }
 

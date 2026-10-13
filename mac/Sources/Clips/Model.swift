@@ -194,6 +194,7 @@ final class AppModel: ObservableObject {
 
     private func post(_ folder: URL) {
         let title = "Recording · " + Self.titleStamp.string(from: Date())
+        clipTitle = title
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = [Self.repo.appendingPathComponent("post.sh").path, folder.path, title]
@@ -243,8 +244,8 @@ final class AppModel: ObservableObject {
             err.fileHandleForReading.readabilityHandler = nil
             Task { @MainActor in
                 if proc.terminationStatus == 0, let link {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(link.absoluteString, forType: .string)
+                    self.lastLink = link
+                    self.copyLink()
                     NSSound(named: "Glass")?.play()
                     self.phase = .done(link)
                 } else {
@@ -259,6 +260,40 @@ final class AppModel: ObservableObject {
     }
 
     @Published var lastFolder: URL?
+    @Published var clipTitle = ""
+    /// The newest posted link, kept across launches so the menu bar can copy it again.
+    @Published var lastLink: URL? = UserDefaults.standard.url(forKey: "lastLink") {
+        didSet { d.set(lastLink, forKey: "lastLink") }
+    }
+
+    func copyLink() {
+        guard let link = lastLink else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link.absoluteString, forType: .string)
+    }
+
+    /// The same key the web page uses for owner editing, kept next to the repo by setup.
+    private var adminKey: String? {
+        (try? String(contentsOf: Self.repo.appendingPathComponent(".adminkey"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+    var canRename: Bool { adminKey != nil }
+
+    /// Renames the clip on the site (the page and link preview pick it up right away).
+    func rename(_ title: String) async -> Bool {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, let key = adminKey, let link = lastLink,
+              let api = URL(string: "/api/title", relativeTo: link) else { return false }
+        var req = URLRequest(url: api)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["slug": link.lastPathComponent, "title": clean])
+        guard let (_, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return false }
+        clipTitle = clean
+        return true
+    }
 
     func reset() { phase = .idle }
 
@@ -266,4 +301,8 @@ final class AppModel: ObservableObject {
 
     static let stamp: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH.mm.ss"; return f }()
     static let titleStamp: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"; return f }()
+}
+
+extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

@@ -253,6 +253,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             if NSApp.currentEvent?.type == .rightMouseUp {
                 let menu = NSMenu()
+                if model.lastLink != nil {
+                    menu.addItem(withTitle: "Copy Last Link", action: #selector(copyLastLink), keyEquivalent: "").target = self
+                }
                 menu.addItem(withTitle: "Show Recordings Folder", action: #selector(openLibrary), keyEquivalent: "").target = self
                 menu.addItem(withTitle: "Open Library", action: #selector(openSite), keyEquivalent: "").target = self
                 menu.addItem(.separator())
@@ -266,6 +269,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if bar.isVisible { hideBar() } else { showBar() }
         }
     }
+
+    @objc func copyLastLink() { MainActor.assumeIsolated { model.copyLink() } }
 
     @objc func openLibrary() {
         try? FileManager.default.createDirectory(at: AppModel.library, withIntermediateDirectories: true)
