@@ -142,6 +142,8 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private let pauses = PauseClock()
     private let screenQ = DispatchQueue(label: "clips.screen"), audioQ = DispatchQueue(label: "clips.sysaudio")
     var onStreamError: ((String) -> Void)?
+    static let fps: Int32 = 30
+    static let maxCaptureSide: CGFloat = 2560
 
     init(folder: URL, camera: CameraController) {
         self.folder = folder
@@ -161,17 +163,21 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         let me = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
         let filter = SCContentFilter(display: display, excludingApplications: me, exceptingWindows: [])
 
+        // Clips are published at up to 1920 wide and 30 fps (render.py, add-clip.sh), so capturing the
+        // full Retina size at 60 fps only made the Mac work harder. Capture 30 fps, longest side at
+        // most 2560: still sharper than the output, and render.py scales the cursor to match.
         let scale = NSScreen.screens.first { $0.displayID == display.displayID }?.backingScaleFactor ?? 2
         pointWidth = CGFloat(display.width)
-        let pw = Int(CGFloat(display.width) * scale) & ~1, ph = Int(CGFloat(display.height) * scale) & ~1
+        let fit = min(scale, Self.maxCaptureSide / CGFloat(max(display.width, display.height)))
+        let pw = Int(CGFloat(display.width) * fit) & ~1, ph = Int(CGFloat(display.height) * fit) & ~1
 
         let cfg = SCStreamConfiguration()
         cfg.width = pw
         cfg.height = ph
-        cfg.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        cfg.minimumFrameInterval = CMTime(value: 1, timescale: Self.fps)
         cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         cfg.showsCursor = false               // redrawn from the mouse log, bigger and smoother
-        cfg.queueDepth = 6
+        cfg.queueDepth = 5
         cfg.capturesAudio = o.systemAudio
         cfg.excludesCurrentProcessAudio = true
         cfg.sampleRate = 48000
@@ -180,8 +186,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         screenW = try TrackWriter(url: rec.appendingPathComponent("channel-2-display-0.mp4"), type: .mp4,
             input: AVAssetWriterInput(mediaType: .video, outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: pw, AVVideoHeightKey: ph,
-                AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 24_000_000,
-                                                  AVVideoExpectedSourceFrameRateKey: 60,
+                AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 12_000_000,
+                                                  AVVideoExpectedSourceFrameRateKey: Self.fps,
+                                                  AVVideoAllowFrameReorderingKey: false,
                                                   AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel]]))
         if o.systemAudio {
             sysW = try TrackWriter(url: rec.appendingPathComponent("channel-1-system-audio-0.m4a"), type: .m4a,
@@ -192,7 +199,8 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
             camW = try TrackWriter(url: rec.appendingPathComponent("channel-4-webcam-0.mp4"), type: .mp4,
                 input: AVAssetWriterInput(mediaType: .video, outputSettings: [
                     AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Int(d.width), AVVideoHeightKey: Int(d.height),
-                    AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 10_000_000]]))
+                    AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 5_000_000,
+                                                      AVVideoAllowFrameReorderingKey: false]]))
         }
         if o.mic != nil {
             micW = try TrackWriter(url: rec.appendingPathComponent("channel-3-microphone-0.m4a"), type: .m4a,
@@ -312,7 +320,8 @@ final class CameraController: NSObject {
     override init() {
         super.init()
         session.beginConfiguration()
-        if session.canSetSessionPreset(.hd1920x1080) { session.sessionPreset = .hd1920x1080 }
+        // The facecam ends up a 600 px square, so 720p is plenty and much lighter than 1080p.
+        if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 }
         videoOut.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
         videoOut.alwaysDiscardsLateVideoFrames = true
         if session.canAddOutput(videoOut) { session.addOutput(videoOut) }
@@ -435,7 +444,7 @@ final class MouseLogger {
     /// The system cursor's look changes (arrow, hand, I-beam...). Save each new one as a PNG once.
     private func sampleCursor(force: Bool) {
         let now = hostNowMs()
-        guard force || now - lastCursorCheck > 60, let c = NSCursor.currentSystem else { return }
+        guard force || now - lastCursorCheck > 150, let c = NSCursor.currentSystem else { return }
         lastCursorCheck = now
         let img = c.image
         guard let tiff = img.tiffRepresentation else { return }
