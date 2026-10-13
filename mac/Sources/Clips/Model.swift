@@ -15,6 +15,9 @@ enum Phase: Equatable {
 final class AppModel: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var startedAt = Date()
+    /// Set while a recording is paused. Paused time is left out of the clip and the timer.
+    @Published var pausedSince: Date?
+    @Published var pausedTotal: TimeInterval = 0
     @Published var displays: [NSScreen] = NSScreen.screens
     @Published var cameras: [AVCaptureDevice] = []
     @Published var mics: [AVCaptureDevice] = []
@@ -129,11 +132,32 @@ final class AppModel: ObservableObject {
                                     cameraRect: cameraOn ? cameraRect : nil))
             recorder = r
             startedAt = Date()
+            pausedSince = nil
+            pausedTotal = 0
             phase = .recording
         } catch {
             await r.cancel()
             fail(error.localizedDescription)
         }
+    }
+
+    func togglePause() {
+        guard let r = recorder, case .recording = phase else { return }
+        if let since = pausedSince {
+            r.resume()
+            pausedTotal += Date().timeIntervalSince(since)
+            pausedSince = nil
+            NSSound(named: "Tink")?.play()
+        } else {
+            r.pause()
+            pausedSince = Date()
+            NSSound(named: "Pop")?.play()
+        }
+    }
+
+    /// Seconds of recording that will end up in the clip.
+    func recordedSeconds(at now: Date) -> TimeInterval {
+        max(0, (pausedSince ?? now).timeIntervalSince(startedAt) - pausedTotal)
     }
 
     func restart() {

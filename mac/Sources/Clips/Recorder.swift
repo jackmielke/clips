@@ -17,6 +17,67 @@ enum RecorderError: LocalizedError {
     }
 }
 
+/// Pauses cut out of the timeline. Every track runs through the same cuts, so they stay in sync
+/// and the files come out as if the paused time never happened.
+final class PauseClock {
+    private let lock = NSLock()
+    private var gaps: [(start: CMTime, end: CMTime)] = []
+    private var pausedAt: CMTime?
+
+    var isPaused: Bool { lock.lock(); defer { lock.unlock() }; return pausedAt != nil }
+
+    func pause() {
+        lock.lock(); defer { lock.unlock() }
+        if pausedAt == nil { pausedAt = CMClockGetTime(CMClockGetHostTimeClock()) }
+    }
+
+    func resume() {
+        lock.lock(); defer { lock.unlock() }
+        guard let p = pausedAt else { return }
+        gaps.append((p, CMClockGetTime(CMClockGetHostTimeClock())))
+        pausedAt = nil
+    }
+
+    /// Total time spent paused so far, counting a pause that is still going.
+    func pausedMs(now: Double = hostNowMs()) -> Double {
+        lock.lock(); defer { lock.unlock() }
+        let done = gaps.reduce(0) { $0 + CMTimeSubtract($1.end, $1.start).seconds * 1000 }
+        return done + (pausedAt.map { now - $0.seconds * 1000 } ?? 0)
+    }
+
+    /// nil means the sample touches paused time and should be dropped. Otherwise, how far to pull
+    /// it back so it lands right after the previous kept sample.
+    func shift(for sb: CMSampleBuffer) -> CMTime? {
+        let pts = sb.presentationTimeStamp
+        let dur = sb.duration.isValid ? sb.duration : .zero
+        let end = CMTimeAdd(pts, dur)
+        lock.lock(); defer { lock.unlock() }
+        if let p = pausedAt, end > p { return nil }
+        var shift = CMTime.zero
+        for g in gaps {
+            if pts < g.end && end > g.start { return nil }
+            if pts >= g.end { shift = CMTimeAdd(shift, CMTimeSubtract(g.end, g.start)) }
+        }
+        return shift
+    }
+}
+
+/// A copy of `sb` with every timestamp moved by `shift`.
+func retimed(_ sb: CMSampleBuffer, by shift: CMTime) -> CMSampleBuffer {
+    var count: CMItemCount = 0
+    CMSampleBufferGetSampleTimingInfoArray(sb, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+    var timing = [CMSampleTimingInfo](repeating: .invalid, count: count)
+    CMSampleBufferGetSampleTimingInfoArray(sb, entryCount: count, arrayToFill: &timing, entriesNeededOut: nil)
+    for i in timing.indices {
+        timing[i].presentationTimeStamp = CMTimeAdd(timing[i].presentationTimeStamp, shift)
+        if timing[i].decodeTimeStamp.isValid { timing[i].decodeTimeStamp = CMTimeAdd(timing[i].decodeTimeStamp, shift) }
+    }
+    var out: CMSampleBuffer?
+    CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sb, sampleTimingEntryCount: count,
+                                          sampleTimingArray: &timing, sampleBufferOut: &out)
+    return out ?? sb
+}
+
 /// One output file with one input. Starts on the first sample at or after `start`, so every
 /// file shares the same zero.
 final class TrackWriter {
@@ -78,6 +139,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private var pointWidth: CGFloat = 0
     private var cameraRect: CGRect?
     private let mouse = MouseLogger()
+    private let pauses = PauseClock()
     private let screenQ = DispatchQueue(label: "clips.screen"), audioQ = DispatchQueue(label: "clips.sysaudio")
     var onStreamError: ((String) -> Void)?
 
@@ -150,19 +212,30 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         try await s.startCapture()
         stream = s
 
-        mouse.start(display: display.displayID, folder: rec, startMs: startMs)
+        mouse.start(display: display.displayID, folder: rec, startMs: startMs, pauses: pauses)
+    }
+
+    var isPaused: Bool { pauses.isPaused }
+
+    /// Stops writing without stopping capture, so resuming is instant.
+    func pause() { pauses.pause() }
+
+    func resume() {
+        pauses.resume()
+        mouse.resumed()
     }
 
     /// Stops everything and writes metadata. Returns the project folder.
     @MainActor func finish() async -> URL {
         let endMs = hostNowMs()
+        let pausedMs = pauses.pausedMs(now: endMs)
         try? await stream?.stopCapture()
         stream = nil
         camera.recordingSink = nil
         camera.attachMicSilently(nil)
         mouse.stop()
         for w in [screenW, sysW, camW, micW] { await w?.finish() }
-        writeMetadata(durationMs: endMs - startMs)
+        writeMetadata(durationMs: endMs - startMs - pausedMs)
         return folder
     }
 
@@ -196,9 +269,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
             // Idle frames carry no picture; the previous frame simply stays up longer.
             guard let att = (CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]])?.first,
                   let raw = att[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete else { return }
-            screenW?.append(sb, start: start)
+            write(sb, to: screenW)
         case .audio:
-            sysW?.append(sb, start: start)
+            write(sb, to: sysW)
         default: break
         }
     }
@@ -211,8 +284,12 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sb: CMSampleBuffer, from connection: AVCaptureConnection) {
         let fixed = camera.toHostClock(sb)
-        if output is AVCaptureVideoDataOutput { camW?.append(fixed, start: start) }
-        else { micW?.append(fixed, start: start) }
+        write(fixed, to: output is AVCaptureVideoDataOutput ? camW : micW)
+    }
+
+    private func write(_ sb: CMSampleBuffer, to w: TrackWriter?) {
+        guard let w, let shift = pauses.shift(for: sb) else { return }
+        w.append(shift == .zero ? sb : retimed(sb, by: CMTimeMultiply(shift, multiplier: -1)), start: start)
     }
 }
 
@@ -286,18 +363,7 @@ final class CameraController: NSObject {
         let pts = sb.presentationTimeStamp
         let shift = CMTimeSubtract(CMSyncConvertTime(pts, from: clock, to: host), pts)
         if abs(shift.seconds) < 0.001 { return sb }
-        var count: CMItemCount = 0
-        CMSampleBufferGetSampleTimingInfoArray(sb, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
-        var timing = [CMSampleTimingInfo](repeating: .invalid, count: count)
-        CMSampleBufferGetSampleTimingInfoArray(sb, entryCount: count, arrayToFill: &timing, entriesNeededOut: nil)
-        for i in timing.indices {
-            timing[i].presentationTimeStamp = CMTimeAdd(timing[i].presentationTimeStamp, shift)
-            if timing[i].decodeTimeStamp.isValid { timing[i].decodeTimeStamp = CMTimeAdd(timing[i].decodeTimeStamp, shift) }
-        }
-        var out: CMSampleBuffer?
-        CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sb, sampleTimingEntryCount: count,
-                                              sampleTimingArray: &timing, sampleBufferOut: &out)
-        return out ?? sb
+        return retimed(sb, by: shift)
     }
 }
 
@@ -312,10 +378,12 @@ final class MouseLogger {
     private var startMs: Double = 0
     private var lastCursorCheck: Double = 0
     private var cursorId = "arrow"
+    private var pauses: PauseClock?
 
-    func start(display: CGDirectDisplayID, folder: URL, startMs: Double) {
+    func start(display: CGDirectDisplayID, folder: URL, startMs: Double, pauses: PauseClock) {
         self.folder = folder
         self.startMs = startMs
+        self.pauses = pauses
         bounds = CGDisplayBounds(display)
         try? FileManager.default.createDirectory(at: folder.appendingPathComponent("cursors"), withIntermediateDirectories: true)
         let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged,
@@ -337,7 +405,13 @@ final class MouseLogger {
         write(Array(cursors.values), to: folder.appendingPathComponent("cursors.json"))
     }
 
+    /// Puts the pointer back where it is now, so the redrawn cursor doesn't glide across the cut.
+    func resumed() {
+        record(type: "mouseMoved", at: CGEvent(source: nil)?.location ?? .zero, button: nil)
+    }
+
     private func handle(_ e: NSEvent) {
+        if pauses?.isPaused == true { return }
         let p = e.cgEvent?.location ?? CGEvent(source: nil)?.location ?? .zero
         sampleCursor(force: false)
         switch e.type {
@@ -351,8 +425,9 @@ final class MouseLogger {
     }
 
     private func record(type: String, at p: CGPoint, button: String?) {
+        let now = hostNowMs()
         var ev: [String: Any] = ["type": type, "x": p.x - bounds.minX, "y": p.y - bounds.minY,
-                                 "cursorId": cursorId, "processTimeMs": hostNowMs() - startMs,
+                                 "cursorId": cursorId, "processTimeMs": now - startMs - (pauses?.pausedMs(now: now) ?? 0),
                                  "unixTimeMs": Date().timeIntervalSince1970 * 1000, "activeModifiers": []]
         if let button { ev["button"] = button; clicks.append(ev) } else { moves.append(ev) }
     }

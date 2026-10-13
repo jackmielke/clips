@@ -79,10 +79,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var countdown: FloatingPanel!
     var status: NSStatusItem!
     var hotKey: EventHotKeyRef?
+    var pauseHotKey: EventHotKeyRef?
     var subs = Set<AnyCancellable>()
     var userMovedBar = false
 
-    /// clips://toggle, clips://start, clips://stop, clips://show — for Raycast, Shortcuts, voice, and Claude.
+    /// clips://toggle, clips://start, clips://stop, clips://pause, clips://show — for Raycast, Shortcuts, voice, and Claude.
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
             for url in urls {
@@ -90,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "toggle": model.toggle()
                 case "start": if case .recording = model.phase {} else { model.startCountdown() }
                 case "stop": if case .recording = model.phase { model.stop() }
+                case "pause": model.togglePause()
                 default: break
                 }
                 showBar()
@@ -143,6 +145,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onLayoutChange = { [weak self] in self?.layout() }
         model.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.phaseChanged(phase) }
+        }.store(in: &subs)
+        model.$pausedSince.sink { [weak self] since in
+            DispatchQueue.main.async {
+                guard let self, self.isRecording else { return }
+                self.status.button?.image = NSImage(systemSymbolName: since != nil ? "pause.circle.fill" : "record.circle.fill",
+                                                    accessibilityDescription: "Clips")
+                self.status.button?.contentTintColor = since != nil ? .systemYellow : .systemRed
+                self.bar.setContentSize(self.bar.contentView!.fittingSize)
+                self.keepBarCentered()
+            }
         }.store(in: &subs)
 
         let menu = NSMenu(), appItem = NSMenuItem()
@@ -262,21 +274,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openSite() { NSWorkspace.shared.open(URL(string: "https://jack-clips.vercel.app/library")!) }
     @objc func showBarAction() { MainActor.assumeIsolated { showBar() } }
 
-    // ⌥⇧R starts and stops a recording from anywhere. Carbon hot keys need no Accessibility grant.
+    // ⌥⇧R starts and stops a recording from anywhere, ⌥⇧P pauses and resumes it. Carbon hot keys need no Accessibility grant.
     private func registerHotKey() {
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, ctx in
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, ctx in
             let me = Unmanaged<AppDelegate>.fromOpaque(ctx!).takeUnretainedValue()
+            var key = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              nil, MemoryLayout<EventHotKeyID>.size, nil, &key)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     if !me.bar.isVisible { me.showBar() }
-                    me.model.toggle()
+                    if key.id == 2 { me.model.togglePause() } else { me.model.toggle() }
                 }
             }
             return noErr
         }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
         RegisterEventHotKey(UInt32(kVK_ANSI_R), UInt32(optionKey | shiftKey), EventHotKeyID(signature: 0x434C5053, id: 1),
                             GetApplicationEventTarget(), 0, &hotKey)
+        RegisterEventHotKey(UInt32(kVK_ANSI_P), UInt32(optionKey | shiftKey), EventHotKeyID(signature: 0x434C5053, id: 2),
+                            GetApplicationEventTarget(), 0, &pauseHotKey)
     }
 }
 

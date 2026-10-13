@@ -81,12 +81,20 @@ struct ControlBar: View {
     private var recording: some View {
         HStack(spacing: 6) {
             HStack(spacing: 9) {
-                PulseDot()
+                if m.pausedSince != nil {
+                    Image(systemName: "pause.fill").font(.system(size: 10, weight: .bold)).foregroundStyle(.yellow)
+                        .frame(width: 18, height: 18)
+                } else {
+                    PulseDot()
+                }
                 TimelineView(.periodic(from: m.startedAt, by: 1)) { ctx in
                     Text(elapsed(ctx.date)).font(.system(size: 14, weight: .semibold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(m.pausedSince != nil ? .white.opacity(0.55) : .white)
                 }
             }.padding(.leading, 10).padding(.trailing, 4)
             Sep()
+            IconButton(icon: m.pausedSince != nil ? "play.fill" : "pause.fill", on: true,
+                       help: m.pausedSince != nil ? "Resume (⌥⇧P)" : "Pause (⌥⇧P)") { m.togglePause() }
             IconButton(icon: "arrow.counterclockwise", on: true, help: "Start over", dim: true) { m.restart() }
             IconButton(icon: "trash", on: true, help: "Discard", dim: true) { m.discard() }
             Button(action: m.stop) {
@@ -161,7 +169,7 @@ struct ControlBar: View {
     }
 
     private func elapsed(_ now: Date) -> String {
-        let t = max(0, Int(now.timeIntervalSince(m.startedAt)))
+        let t = Int(m.recordedSeconds(at: now))
         return String(format: "%d:%02d", t / 60, t % 60)
     }
 
