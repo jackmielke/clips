@@ -8,7 +8,8 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 URL=$(sed -n 's/^R2_PUBLIC_URL=//p' .env.r2 | tr -d '"'"'"' ' | sed 's:/*$::')
 [ -n "$URL" ] || { echo ".env.r2 is missing R2_PUBLIC_URL"; exit 1; }
 python3 r2.py check
-python3 r2.py cors
+# Setting CORS needs an Admin Read & Write token; with an Object-only token, paste the policy in the dashboard instead.
+python3 r2.py cors || echo "Couldn't set CORS with this token: add it in R2 > bucket > Settings > CORS Policy (GET, HEAD from *)"
 npx --yes vercel@latest env rm CLIPS_MEDIA_URL production --yes >/dev/null 2>&1 || true
 printf %s "$URL" | npx --yes vercel@latest env add CLIPS_MEDIA_URL production >/dev/null
 ./offload-media.sh
