@@ -4,6 +4,10 @@
     {
       "source": "/:slug([0-9a-f]{8})",
       "destination": "/api/page?slug=:slug"
+    },
+    {
+      "source": "/v/:path*",
+      "destination": "/api/media?path=:path*"
     }
   ],
   "functions": {

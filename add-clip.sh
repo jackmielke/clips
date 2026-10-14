@@ -20,9 +20,10 @@ if [ ! -f "$OUT/save.mp4" ]; then
 fi
 # Vercel's free plan rejects any single file over 100 MB, and one too-big file fails the whole deploy.
 # Long clips are cut into ~6 s HLS chunks instead (stream copy, no re-encode) and ship without save.mp4.
+# With R2 set up (.env.r2) videos never go through the deploy, so any size stays one file.
 STREAM=mp4
 if [ -f "$OUT/index.m3u8" ] && [ ! -f "$OUT/save.mp4" ]; then STREAM=hls
-elif [ "$(stat -f%z "$OUT/save.mp4")" -gt 95000000 ]; then
+elif [ ! -f .env.r2 ] && [ "$(stat -f%z "$OUT/save.mp4")" -gt 95000000 ]; then
   [ -f "$OUT/index.m3u8" ] || ffmpeg -hide_banner -loglevel error -y -i "$OUT/save.mp4" -c copy -f hls -hls_time 6 \
     -hls_playlist_type vod -hls_segment_filename "$OUT/s%03d.ts" "$OUT/index.m3u8"
   rm -f "$OUT/save.mp4"; STREAM=hls
@@ -40,5 +41,6 @@ sed -e "s|{{TITLE}}|$TITLE|g" -e "s|{{SLUG}}|$SLUG|g" -e "s|{{ORIGIN}}|$ORIGIN|g
     -e "${CLIP_SPEED:+s|if (SPEEDS.includes(s)) speed = s;|/* fixed speed (CLIP_SPEED) */|}" template.html > "public/c/$SLUG.html"
 python3 register-clip.py "$SLUG" "$TITLE" "$SECS" "$W" "$H" "$(date -r "$IN" -u +%Y-%m-%dT%H:%M:%SZ)"
 python3 build-index.py
+./offload-media.sh "$SLUG"   # to R2, when set up
 [ -n "$SKIP_DEPLOY" ] || npx --yes vercel@latest deploy --prod --yes >/dev/null
 echo "$ORIGIN/$SLUG"

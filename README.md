@@ -27,3 +27,9 @@ Needs macOS, ffmpeg (with VideoToolbox), Python 3, Node, and the Vercel CLI. The
 
 ## Mac app (`mac/`)
 A native recorder: a floating dark-glass bar (display, camera, mic and computer-audio toggles, Record), a live camera bubble you can drag, and a 3-2-1 countdown. Finish posts the clip and copies the link; the done bar lets you rename the clip (uses `.adminkey`) and copy the link again, and the menu bar icon's right-click menu has Copy Last Link. Pause leaves the paused stretch out of the clip on every track. ⌥⇧R toggles recording and ⌥⇧P pauses or resumes from anywhere, and `open clips://toggle|start|stop|pause` does the same from scripts. It writes the Screen Studio folder layout to `~/Movies/Clips/`, so `render.py` handles both recorders. Build with `mac/build.sh` (installs to /Applications). It needs Screen Recording permission added with the + button in System Settings.
+
+## Video storage (Cloudflare R2)
+Vercel's free plan caps a deploy at 100 MB, and every deploy used to carry every video. With R2 set up, videos go to a bucket once and only small pages and posters are deployed; `/v/...` requests that aren't in the deploy are redirected to the bucket (`api/media.js`).
+1. In Cloudflare: R2, create a bucket, turn on its Public Development URL, and create an R2 API token with Object Read & Write on that bucket.
+2. Put the values in `.env.r2` (gitignored): `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL`.
+3. Run `./setup-r2.sh` once. It sets CORS, adds `CLIPS_MEDIA_URL` to Vercel, moves existing videos to R2 (local copies go to `media/`), and redeploys. From then on `add-clip.sh` offloads each new clip itself.
