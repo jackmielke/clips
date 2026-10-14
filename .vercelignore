@@ -4,3 +4,7 @@ node_modules
 .lastslug
 *.sh
 template.html
+mac/
+.env*
+media/
+__pycache__/
