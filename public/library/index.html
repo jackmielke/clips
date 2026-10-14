@@ -28,6 +28,9 @@
   .d { color:var(--muted); font-size:13px; margin-top:3px; }
   .copy { flex:none; border:1px solid var(--line); background:transparent; color:var(--fg); font:500 12px Inter, sans-serif; padding:6px 10px; border-radius:999px; cursor:pointer; }
   .copy:hover { background:var(--bg); }
+  .btns { flex:none; display:flex; gap:6px; }
+  .vis.on { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
+  .lock { position:absolute; left:8px; bottom:8px; background:rgba(0,0,0,.72); color:#fff; font-size:12px; font-weight:600; padding:3px 7px; border-radius:6px; }
   .gate { max-width:380px; margin:18vh auto 0; text-align:center; }
   .gate p { color:var(--muted); font-size:14px; }
   .gate form { display:flex; gap:8px; margin-top:16px; }
@@ -66,17 +69,31 @@
     if (!key) return gate();
     const r = await fetch('/api/library', { headers: { Authorization: 'Bearer ' + key } }).catch(() => null);
     if (!r || !r.ok) { try { localStorage.removeItem('clipKey'); } catch (e) {} return gate('That key didn’t work.'); }
+    // Private clips play only for the owner; the cookie lets the video and page requests prove it.
+    document.cookie = 'clipKey=' + encodeURIComponent(key) + '; Path=/; Max-Age=31536000; SameSite=Lax; Secure';
     const { clips } = await r.json();
     const cards = clips.map((c) => {
       const date = new Date(c.created).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
       return `<a class="card" href="/${c.slug}">
-        <div class="thumb" style="background-image:url('/v/${c.slug}/poster.jpg')"><span class="dur">${fmt(c.secs)}</span></div>
+        <div class="thumb" style="background-image:url('/v/${c.slug}/poster.jpg')">${c.private ? '<span class="lock">🔒 Private</span>' : ''}<span class="dur">${fmt(c.secs)}</span></div>
         <div class="body"><div><div class="t">${esc(c.title)}</div><div class="d">${date}</div></div>
-        <button class="copy" data-slug="${c.slug}">Copy link</button></div></a>`;
+        <div class="btns"><button class="copy vis${c.private ? ' on' : ''}" data-slug="${c.slug}" title="Public: anyone with the link. Private: only you.">${c.private ? 'Private' : 'Public'}</button>
+        <button class="copy" data-slug="${c.slug}" data-copy>Copy link</button></div></div></a>`;
     }).join('');
     app.innerHTML = `<header><h1>Library</h1><span class="count">${clips.length} clip${clips.length === 1 ? '' : 's'}</span></header>
       ${clips.length ? `<div class="grid">${cards}</div>` : '<p class="empty">No clips yet.</p>'}`;
-    app.querySelectorAll('.copy').forEach((b) => b.onclick = async (e) => {
+    app.querySelectorAll('.vis').forEach((b) => b.onclick = async (e) => {
+      e.preventDefault();
+      const on = !b.classList.contains('on');
+      b.disabled = true;
+      const r = await fetch('/api/visibility', { method: 'POST', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: b.dataset.slug, private: on }) }).catch(() => null);
+      b.disabled = false;
+      if (!r || !r.ok) return;
+      b.classList.toggle('on', on); b.textContent = on ? 'Private' : 'Public';
+      const thumb = b.closest('.card').querySelector('.thumb'), lock = thumb.querySelector('.lock');
+      if (on && !lock) thumb.insertAdjacentHTML('afterbegin', '<span class="lock">🔒 Private</span>'); else if (!on && lock) lock.remove();
+    });
+    app.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async (e) => {
       e.preventDefault();
       try { await navigator.clipboard.writeText(location.origin + '/' + b.dataset.slug); b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy link', 1500); } catch (err) {}
     });

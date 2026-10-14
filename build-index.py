@@ -10,7 +10,7 @@ cards = []
 for c in clips:
     t = html.escape(c['title']); d = c.get('created', '')[:10]
     portrait = c.get('h', 9) > c.get('w', 16)
-    cards.append(f'''<a class="card{' tall' if portrait else ''}" href="/{c['slug']}">
+    cards.append(f'''<a class="card{' tall' if portrait else ''}" href="/{c['slug']}" data-slug="{c['slug']}">
   <div class="thumb"><img src="/v/{c['slug']}/poster.jpg" alt="" loading="lazy"><span class="dur">{dur(c['secs'])}</span></div>
   <div class="t">{t}</div><div class="d" data-d="{d}">{d}</div></a>''')
 page = f'''<!doctype html>
@@ -38,12 +38,17 @@ page = f'''<!doctype html>
   .dur {{ position:absolute; right:10px; bottom:10px; background:rgba(0,0,0,.72); color:#fff; font-size:12px; font-weight:600; padding:3px 8px; border-radius:999px; font-variant-numeric:tabular-nums; }}
   .t {{ font-weight:600; font-size:16px; margin-top:12px; line-height:1.3; }}
   .d {{ color:var(--muted); font-size:13px; margin-top:4px; }}
+  .grid.wait {{ opacity:0; }} .grid {{ transition:opacity .2s; }}
 </style></head>
 <body><main>
-<header><img src="/jm-logo.png" alt=""><h1>Clips</h1><span class="count">{len(clips)} videos</span></header>
-<div class="grid">
+<header><img src="/jm-logo.png" alt=""><h1>Clips</h1><span class="count" id="count">{len(clips)} videos</span></header>
+<div class="grid wait" id="grid">
 {chr(10).join(cards)}
 </div></main>
+<script>fetch('/api/visibility').then(r => r.json()).then(j => {{ /* private clips stay off the home page */
+  j.private.forEach(s => document.querySelector('[data-slug="' + s + '"]')?.remove());
+  const n = document.querySelectorAll('.card').length; document.getElementById('count').textContent = n + (n === 1 ? ' video' : ' videos');
+}}).catch(() => {{}}).finally(() => document.getElementById('grid').classList.remove('wait'));</script>
 <script>document.querySelectorAll('[data-d]').forEach(e => {{ try {{ e.textContent = new Date(e.dataset.d + 'T12:00:00').toLocaleDateString(undefined, {{ month: 'short', day: 'numeric', year: 'numeric' }}); }} catch (x) {{}} }});</script>
 </body></html>'''
 open(os.path.join(root, 'public/index.html'), 'w').write(page)

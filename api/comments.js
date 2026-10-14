@@ -1,15 +1,11 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { isOwner } from './_auth.js';
 import { validSlug } from './_titles.js';
 import { readThread, writeThread } from './_comments.js';
+import { readPrivate } from './_visibility.js';
 
 export const EMOJI = ['👍', '❤️', '😂', '🔥', '👏', '🤯'];
 const MAX = 500;   // per clip, comments and reactions each
-
-function authed(req) {
-  const got = Buffer.from((req.headers.authorization || '').replace(/^Bearer /, ''));
-  const want = Buffer.from(process.env.ADMIN_KEY || '');
-  return want.length > 0 && got.length === want.length && timingSafeEqual(got, want);
-}
 
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 // Comment text keeps line breaks (up to one blank line); names stay on one line.
@@ -21,6 +17,7 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const slug = req.method === 'POST' ? req.body?.slug : req.query.slug;
   if (!validSlug(slug)) return res.status(400).json({ error: 'bad slug' });
+  if (!isOwner(req) && (await readPrivate()).has(slug)) return res.status(404).json({ error: 'not found' });
 
   if (req.method === 'GET') return res.status(200).json(await readThread(slug));
 
@@ -43,7 +40,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'DELETE') {
-    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' });
+    if (!isOwner(req)) return res.status(401).json({ error: 'unauthorized' });
     const thread = await readThread(slug);
     thread.comments = thread.comments.filter((c) => c.id !== req.query.id);
     await writeThread(slug, thread);

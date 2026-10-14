@@ -1,14 +1,8 @@
-import { timingSafeEqual } from 'node:crypto';
+import { isOwner } from './_auth.js';
 import { validSlug, writeTitle } from './_titles.js';
 
-function authed(req) {
-  const got = Buffer.from((req.headers.authorization || '').replace(/^Bearer /, ''));
-  const want = Buffer.from(process.env.ADMIN_KEY || '');
-  return want.length > 0 && got.length === want.length && timingSafeEqual(got, want);
-}
-
 export default async function handler(req, res) {
-  if (!authed(req)) return res.status(401).json({ error: 'unauthorized' });
+  if (!isOwner(req)) return res.status(401).json({ error: 'unauthorized' });
   if (req.method === 'GET') return res.status(200).json({ ok: true });
   if (req.method !== 'POST') return res.status(405).end();
   const { slug, title } = req.body || {};
