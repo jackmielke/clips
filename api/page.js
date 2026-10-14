@@ -18,6 +18,8 @@ export default async function handler(req, res) {
     const orig = html.match(/<meta name="clip-title" content="([^"]*)">/)?.[1];
     if (orig) html = html.split(orig).join(esc(title));
   }
+  // Comments and reactions live in one script so every clip, old or new, gets them.
+  html = html.replace('</body>', '<link rel="stylesheet" href="/comments.css"><script src="/comments.js" defer></script>\n</body>');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).send(html);

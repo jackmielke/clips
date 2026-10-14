@@ -1,0 +1,43 @@
+/* Comments and reactions; uses the clip page's own color variables, so it follows light and dark. */
+.cm-marks { position: relative; height: 26px; margin: 8px 6px 0; }
+.cm-mark { position: absolute; top: 0; transform: translateX(-50%); border: 0; cursor: pointer; padding: 0; font: inherit; }
+.cm-mark-c { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); font-size: 11px; font-weight: 600; box-shadow: 0 0 0 2px var(--bg); z-index: 2; }
+.cm-mark-r { background: none; font-size: 14px; line-height: 22px; opacity: .85; }
+.cm-mark:hover { transform: translateX(-50%) scale(1.2); z-index: 3; }
+
+.cm-reacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+.cm-react { position: relative; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 999px; padding: 6px 12px; cursor: pointer; font: 500 13px Inter, system-ui, sans-serif; }
+.cm-react:hover { border-color: var(--muted); }
+.cm-emoji { font-size: 16px; line-height: 1; }
+.cm-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cm-count:empty { display: none; }
+.cm-pop { animation: cm-pop .35s ease; }
+@keyframes cm-pop { 40% { transform: scale(1.18); } }
+.cm-burst { position: absolute; left: 50%; top: 0; font-size: 22px; pointer-events: none; animation: cm-burst .9s ease-out forwards; }
+@keyframes cm-burst { from { transform: translate(-50%, 0); opacity: 1; } to { transform: translate(-50%, -48px) scale(1.4); opacity: 0; } }
+
+.cm { margin-top: 28px; max-width: 720px; }
+.cm-head { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+.cm-form { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
+.cm-text { width: 100%; border: 0; outline: none; resize: vertical; background: transparent; color: var(--fg); font: 400 15px/1.45 Inter, system-ui, sans-serif; min-height: 44px; }
+.cm-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 8px; }
+.cm-name { flex: 1 1 160px; min-width: 0; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 999px; padding: 8px 12px; font: 500 14px Inter, system-ui, sans-serif; outline: none; }
+.cm-name:focus { border-color: var(--muted); }
+.cm-at { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.cm-send { border: 0; background: var(--accent); color: var(--accent-fg); border-radius: 999px; padding: 9px 18px; font: 600 14px Inter, system-ui, sans-serif; cursor: pointer; }
+.cm-send:disabled { opacity: .6; }
+.cm-err { color: #d14343; font-size: 13px; }
+.cm-err:empty { display: none; }
+.cm-err:not(:empty) { margin-top: 8px; }
+
+.cm-list { margin-top: 16px; display: flex; flex-direction: column; gap: 16px; }
+.cm-empty { color: var(--muted); font-size: 14px; }
+.cm-item { display: flex; gap: 12px; }
+.cm-avatar { flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--card); border: 1px solid var(--line); display: grid; place-items: center; font-weight: 600; font-size: 13px; }
+.cm-body { min-width: 0; flex: 1; }
+.cm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.cm-chip { border: 0; background: var(--save-bg); color: var(--save-fg); border-radius: 999px; padding: 2px 8px; font: 600 12px Inter, system-ui, sans-serif; cursor: pointer; font-variant-numeric: tabular-nums; }
+.cm-when { color: var(--muted); font-size: 12px; }
+.cm-del { border: 0; background: none; color: var(--muted); font: 500 12px Inter, system-ui, sans-serif; cursor: pointer; padding: 0; margin-left: auto; }
+.cm-del:hover { color: #d14343; }
+.cm-says { margin-top: 3px; font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
