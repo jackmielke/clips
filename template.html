@@ -51,10 +51,20 @@
   </div>
   <div class="hint">Shortcuts: space play/pause · ← → skip 5s · &lt; &gt; change speed</div>
 </main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
 <script>
   const v = document.getElementById('v');
-  // A single faststart mp4: plays at once and seeks with range requests in every browser.
-  v.src = '/v/{{SLUG}}/save.mp4';
+  const STREAM = '{{STREAM}}';
+  if (STREAM === 'hls') {
+    // Long clips (over Vercel's 100 MB file cap) ship as HLS chunks only, so there is no file to save.
+    document.getElementById('save').remove();
+    const src = '/v/{{SLUG}}/index.m3u8';
+    if (window.Hls && Hls.isSupported()) { const h = new Hls(); h.loadSource(src); h.attachMedia(v); }
+    else v.src = src;
+  } else {
+    // A single faststart mp4: plays at once and seeks with range requests in every browser.
+    v.src = '/v/{{SLUG}}/save.mp4';
+  }
 
   const SPEEDS = [1, 1.25, 1.5, 1.75, 2];
   let speed = 1.25;
@@ -122,6 +132,7 @@
   // Save video: phones get the share sheet (Save Video / AirDrop / Messages); desktops get a download.
   // Safari only opens the share sheet straight from a tap, so the first tap fetches, the second shares.
   (() => {
+    if (!document.getElementById('save')) return;
     const btn = document.getElementById('save'), url = '/v/{{SLUG}}/save.mp4';
     const name = (document.title || 'clip').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') + '.mp4';
     let file = null;

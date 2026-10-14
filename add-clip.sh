@@ -18,6 +18,15 @@ if [ ! -f "$OUT/save.mp4" ]; then
       -c:a aac -ac 2 -b:a 160k -movflags +faststart "$OUT/save.mp4"
   fi
 fi
+# Vercel's free plan rejects any single file over 100 MB, and one too-big file fails the whole deploy.
+# Long clips are cut into ~6 s HLS chunks instead (stream copy, no re-encode) and ship without save.mp4.
+STREAM=mp4
+if [ -f "$OUT/index.m3u8" ] && [ ! -f "$OUT/save.mp4" ]; then STREAM=hls
+elif [ "$(stat -f%z "$OUT/save.mp4")" -gt 95000000 ]; then
+  [ -f "$OUT/index.m3u8" ] || ffmpeg -hide_banner -loglevel error -y -i "$OUT/save.mp4" -c copy -f hls -hls_time 6 \
+    -hls_playlist_type vod -hls_segment_filename "$OUT/s%03d.ts" "$OUT/index.m3u8"
+  rm -f "$OUT/save.mp4"; STREAM=hls
+fi
 [ -f "$OUT/poster.jpg" ] || ffmpeg -hide_banner -loglevel error -y -ss 5 -i "$IN" -frames:v 1 -vf scale=1280:-2 -q:v 4 "$OUT/poster.jpg"
 SECS=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$IN" | cut -d. -f1)
 DUR="$((SECS/60)):$(printf %02d $((SECS%60)))"
@@ -25,7 +34,7 @@ read W H <<< "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,
 DATE=$(date -r "$IN" "+%b %-d, %Y")
 mkdir -p public/c
 sed -e "s|{{TITLE}}|$TITLE|g" -e "s|{{SLUG}}|$SLUG|g" -e "s|{{ORIGIN}}|$ORIGIN|g" -e "s|{{DURATION}}|$DUR|g" \
-    -e "s|{{DATE}}|$DATE|g" -e "s|{{SECS}}|$SECS|g" -e "s|{{ASPECT}}|$W / $H|g" \
+    -e "s|{{DATE}}|$DATE|g" -e "s|{{SECS}}|$SECS|g" -e "s|{{ASPECT}}|$W / $H|g" -e "s|{{STREAM}}|$STREAM|g" \
     -e "s|let speed = 1.25;|let speed = ${CLIP_SPEED:-1.25};|" \
     -e "${CLIP_SPEED:+s|let speed = $CLIP_SPEED;|let speed = $CLIP_SPEED; const FIXED_SPEED = true;|}" \
     -e "${CLIP_SPEED:+s|if (SPEEDS.includes(s)) speed = s;|/* fixed speed (CLIP_SPEED) */|}" template.html > "public/c/$SLUG.html"
