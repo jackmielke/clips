@@ -10,3 +10,4 @@ api/_clips.json
 .env.r2
 # local copies of videos already uploaded to R2
 media/
+__pycache__/
