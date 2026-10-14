@@ -32,4 +32,5 @@ A native recorder: a floating dark-glass bar (display, camera, mic and computer-
 Vercel's free plan caps a deploy at 100 MB, and every deploy used to carry every video. With R2 set up, videos go to a bucket once and only small pages and posters are deployed; `/v/...` requests that aren't in the deploy are redirected to the bucket (`api/media.js`).
 1. In Cloudflare: R2, create a bucket, turn on its Public Development URL, and create an R2 API token with Object Read & Write on that bucket.
 2. Put the values in `.env.r2` (gitignored): `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL`.
-3. Run `./setup-r2.sh` once. It sets CORS, adds `CLIPS_MEDIA_URL` to Vercel, moves existing videos to R2 (local copies go to `media/`), and redeploys. From then on `add-clip.sh` offloads each new clip itself.
+3. In the bucket's Settings, CORS Policy, add `[{"AllowedOrigins":["*"],"AllowedMethods":["GET","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["Content-Length","Content-Range"],"MaxAgeSeconds":86400}]` (an Object Read & Write token can't set it).
+4. Run `./setup-r2.sh` once. It sets CORS, adds `CLIPS_MEDIA_URL` to Vercel, moves existing videos to R2 (local copies go to `media/`), and redeploys. From then on `add-clip.sh` offloads each new clip itself.
