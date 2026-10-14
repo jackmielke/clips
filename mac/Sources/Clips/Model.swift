@@ -10,6 +10,9 @@ struct Upload: Identifiable, Equatable {
     let title: String
     var stage = "Waiting"
     var progress: Double?   // nil = indeterminate
+    /// The finished video exists on disk (rendering is done; only the upload is left).
+    var localReady = false
+    var localFile: URL { folder.appendingPathComponent("clip.mp4") }
 }
 
 enum Phase: Equatable {
@@ -265,7 +268,12 @@ final class AppModel: ObservableObject {
             let s = String(decoding: data, as: UTF8.self)
             for line in s.split(whereSeparator: \.isNewline) {
                 if line.hasPrefix("DURATION "), let v = Double(line.dropFirst(9)) { duration = v }
-                if line.hasPrefix("STAGE upload") { Task { @MainActor in self.update(u.id, stage: "Uploading", progress: nil) } }
+                if line.hasPrefix("STAGE upload") {
+                    Task { @MainActor in
+                        self.update(u.id, stage: "Uploading", progress: nil)
+                        if let i = self.uploads.firstIndex(where: { $0.id == u.id }) { self.uploads[i].localReady = true }
+                    }
+                }
                 if line.hasPrefix("https://"), let u = URL(string: String(line)) { link = u }
             }
         }

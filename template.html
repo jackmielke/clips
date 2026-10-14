@@ -51,13 +51,10 @@
   </div>
   <div class="hint">Shortcuts: space play/pause · ← → skip 5s · &lt; &gt; change speed</div>
 </main>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
 <script>
   const v = document.getElementById('v');
-  const src = '/v/{{SLUG}}/index.m3u8';
-  // Prefer hls.js wherever it works (Chrome's newer native HLS has dropped audio); native only for iOS Safari.
-  if (window.Hls && Hls.isSupported()) { const h = new Hls(); h.loadSource(src); h.attachMedia(v); }
-  else v.src = src;
+  // A single faststart mp4: plays at once and seeks with range requests in every browser.
+  v.src = '/v/{{SLUG}}/save.mp4';
 
   const SPEEDS = [1, 1.25, 1.5, 1.75, 2];
   let speed = 1.25;

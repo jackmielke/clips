@@ -12,6 +12,9 @@ CAM = 600            # facecam square size in px
 CAM_RADIUS = 70
 CAM_MARGIN = 60
 RING_SECS = 0.3
+# The render is the published file (add-clip.sh copies it as-is), so finish at web size here
+# instead of encoding a big master and re-encoding it twice more.
+FINAL = "scale='min(1920,iw)':-2,format=yuv420p"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -114,9 +117,9 @@ def main(project, out):
         g.append(f'[{cam_i}:v]crop=min(iw\\,ih):min(iw\\,ih),scale={S}:{S},format=yuva420p[cam]')
         g.append(f'[1:v]format=gray,scale={S}:{S}[m]')
         g.append('[cam][m]alphamerge[camr]')
-        g.append(f'[bgr][camr]overlay={cam_x}:{cam_y}:shortest=1,format=yuv420p[v]')
+        g.append(f'[bgr][camr]overlay={cam_x}:{cam_y}:shortest=1,{FINAL}[v]')
     else:
-        g.append('[bgr]format=yuv420p[v]')
+        g.append(f'[bgr]{FINAL}[v]')
     maps = ['-map', '[v]']
     if len(audio) == 2:
         g.append(f'[{a0}:a][{a0 + 1}:a]amix=inputs=2:normalize=0:duration=longest[a]')
@@ -127,8 +130,9 @@ def main(project, out):
 
     subprocess.check_call(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-stats', '-y', *inputs,
                            '-filter_complex', ';'.join(g), *maps,
-                           '-c:v', 'h264_videotoolbox', '-b:v', '12M', '-c:a', 'aac', '-b:a', '192k',
-                           '-shortest', out])
+                           '-c:v', 'h264_videotoolbox', '-b:v', '5M', '-maxrate', '6M', '-g', str(FPS * 2),
+                           '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-b:a', '160k',
+                           '-movflags', '+faststart', '-shortest', out])
 
 
 if __name__ == '__main__':

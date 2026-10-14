@@ -3,7 +3,7 @@
 A self-hosted Loom replacement for macOS. Record with the native Clips app (or Screen Studio), press Finish, and get a clean shareable link on your own Vercel. You get a player that starts at 1.25x and shows the time saved, your cursor and click rings redrawn, a rounded facecam, titles you can edit, and a private library.
 
 - **render.py** rebuilds a Screen Studio project from its raw tracks (`*.screenstudio/recording/`): screen, a redrawn cursor with click rings (from `mousemoves-0.json` / `mouseclicks-0.json`), a rounded facecam in the bottom right, and mic + system audio. It works even when Screen Studio's own export is blocked.
-- **add-clip.sh** encodes any mp4 to HLS, builds a player page, deploys to Vercel and prints `https://<origin>/<slug>`.
+- **add-clip.sh** publishes one faststart mp4 (copied as-is from render.py, encoded once otherwise), builds a player page, deploys to Vercel and prints `https://<origin>/<slug>`.
 - **post-latest.sh "Title"** does both for the newest Screen Studio recording.
 
 The player starts at 1.25x, shows how much time each speed saves, has keyboard shortcuts, and link previews with a poster frame. Pages are `noindex`, and slugs are random.

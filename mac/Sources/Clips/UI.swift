@@ -118,6 +118,11 @@ struct ControlBar: View {
                     .font(.system(size: 12, weight: .medium)).monospacedDigit()
                     .foregroundStyle(.white.opacity(0.7))
                     .contentTransition(.numericText())
+                if u.localReady {
+                    IconButton(icon: "play.fill", on: true, help: "Watch it now, while it uploads") {
+                        NSWorkspace.shared.open(u.localFile)
+                    }
+                }
                 if m.uploads.count > 1 {
                     Text("+\(m.uploads.count - 1)").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.45))
                 }
