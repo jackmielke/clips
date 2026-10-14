@@ -2,11 +2,20 @@ import AppKit
 import AVFoundation
 import Combine
 
+/// A finished recording on its way to a link. Uploads run one at a time in the background
+/// (add-clip.sh deploys the whole site, so two at once would race), while you keep recording.
+struct Upload: Identifiable, Equatable {
+    let id = UUID()
+    let folder: URL
+    let title: String
+    var stage = "Waiting"
+    var progress: Double?   // nil = indeterminate
+}
+
 enum Phase: Equatable {
     case idle
     case countdown(Int)
     case recording
-    case posting(stage: String, progress: Double?)   // nil = indeterminate
     case done(URL)
     case failed(String)
 }
@@ -101,7 +110,6 @@ final class AppModel: ObservableObject {
         case .idle, .done, .failed: startCountdown()
         case .countdown: cancelCountdown()
         case .recording: stop()
-        case .posting: break
         }
     }
 
@@ -174,14 +182,17 @@ final class AppModel: ObservableObject {
         Task { await r.cancel() }
     }
 
+    /// Finish goes straight back to the Record button; saving and posting carry on in the background.
     func stop() {
         guard let r = recorder else { return }
         recorder = nil
-        phase = .posting(stage: "Saving", progress: nil)
+        pausedSince = nil
+        phase = .idle
         NSSound(named: "Pop")?.play()
+        let title = "Recording · " + Self.titleStamp.string(from: Date())
         Task {
             let folder = await r.finish()
-            post(folder)
+            enqueue(folder, title: title)
         }
     }
 
@@ -192,9 +203,45 @@ final class AppModel: ObservableObject {
 
     // MARK: Posting (render.py + add-clip.sh via post.sh)
 
-    private func post(_ folder: URL) {
-        let title = "Recording · " + Self.titleStamp.string(from: Date())
-        clipTitle = title
+    @Published var uploads: [Upload] = []
+    /// Called when an upload finishes: the link, or nil and why it failed.
+    var onPosted: ((Upload, URL?, String?) -> Void)?
+
+    private func enqueue(_ folder: URL, title: String) {
+        uploads.append(Upload(folder: folder, title: title))
+        if uploads.count == 1 { runNext() }
+    }
+
+    private func runNext() {
+        if let u = uploads.first { post(u) }
+    }
+
+    private func update(_ id: UUID, stage: String, progress: Double?) {
+        guard let i = uploads.firstIndex(where: { $0.id == id }) else { return }
+        uploads[i].stage = stage
+        uploads[i].progress = progress
+    }
+
+    private func finished(_ u: Upload, link: URL?, error: String?) {
+        uploads.removeAll { $0.id == u.id }
+        lastFolder = u.folder
+        if let link {
+            lastLink = link
+            clipTitle = u.title
+            copyLink()
+            NSSound(named: "Glass")?.play()
+        }
+        // Only take over the bar when it isn't busy with something newer.
+        switch phase {
+        case .idle, .done, .failed: phase = link.map { .done($0) } ?? .failed(error ?? "Couldn't post")
+        default: break
+        }
+        onPosted?(u, link, error)
+        runNext()
+    }
+
+    private func post(_ u: Upload) {
+        let folder = u.folder, title = u.title
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = [Self.repo.appendingPathComponent("post.sh").path, folder.path, title]
@@ -207,11 +254,10 @@ final class AppModel: ObservableObject {
         var duration = 0.0
         var link: URL?
         var errTail = ""
-        lastFolder = folder
         let logURL = folder.appendingPathComponent("post.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let log = try? FileHandle(forWritingTo: logURL)
-        phase = .posting(stage: "Rendering", progress: 0)
+        update(u.id, stage: "Rendering", progress: 0)
 
         out.fileHandleForReading.readabilityHandler = { h in
             let data = h.availableData
@@ -219,7 +265,7 @@ final class AppModel: ObservableObject {
             let s = String(decoding: data, as: UTF8.self)
             for line in s.split(whereSeparator: \.isNewline) {
                 if line.hasPrefix("DURATION "), let v = Double(line.dropFirst(9)) { duration = v }
-                if line.hasPrefix("STAGE upload") { Task { @MainActor in self.phase = .posting(stage: "Uploading", progress: nil) } }
+                if line.hasPrefix("STAGE upload") { Task { @MainActor in self.update(u.id, stage: "Uploading", progress: nil) } }
                 if line.hasPrefix("https://"), let u = URL(string: String(line)) { link = u }
             }
         }
@@ -234,7 +280,9 @@ final class AppModel: ObservableObject {
                 if parts.count == 3, let hh = Double(parts[0]), let mm = Double(parts[1]), let ss = Double(parts[2]), duration > 0 {
                     let prog = min(1, (hh * 3600 + mm * 60 + ss) / duration)
                     Task { @MainActor in
-                        if case .posting("Rendering", _) = self.phase { self.phase = .posting(stage: "Rendering", progress: prog) }
+                        if self.uploads.first(where: { $0.id == u.id })?.stage == "Rendering" {
+                            self.update(u.id, stage: "Rendering", progress: prog)
+                        }
                     }
                 }
             }
@@ -244,19 +292,16 @@ final class AppModel: ObservableObject {
             err.fileHandleForReading.readabilityHandler = nil
             Task { @MainActor in
                 if proc.terminationStatus == 0, let link {
-                    self.lastLink = link
-                    self.copyLink()
-                    NSSound(named: "Glass")?.play()
-                    self.phase = .done(link)
+                    self.finished(u, link: link, error: nil)
                 } else {
                     let lines = errTail.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
                     let why = lines.last { $0.lowercased().contains("error") } ?? lines.last ?? "unknown error"
-                    self.phase = .failed("Couldn't post: \(why)")
+                    self.finished(u, link: nil, error: "Couldn't post: \(why)")
                 }
                 try? log?.close()
             }
         }
-        do { try p.run(); postProcess = p } catch { phase = .failed("Couldn't start posting: \(error.localizedDescription)") }
+        do { try p.run(); postProcess = p } catch { finished(u, link: nil, error: "Couldn't start posting: \(error.localizedDescription)") }
     }
 
     @Published var lastFolder: URL?
@@ -297,7 +342,11 @@ final class AppModel: ObservableObject {
 
     func reset() { phase = .idle }
 
-    func retryPost() { if let f = lastFolder { post(f) } }
+    func retryPost() {
+        guard let f = lastFolder else { return }
+        phase = .idle
+        enqueue(f, title: "Recording · " + Self.titleStamp.string(from: Date()))
+    }
 
     static let stamp: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH.mm.ss"; return f }()
     static let titleStamp: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"; return f }()

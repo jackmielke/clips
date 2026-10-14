@@ -239,8 +239,11 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         let pausedMs = pauses.pausedMs(now: endMs)
         try? await stream?.stopCapture()
         stream = nil
-        camera.recordingSink = nil
-        camera.attachMicSilently(nil)
+        // A new recording may already have started while this one saves; leave its camera and mic alone.
+        if camera.recordingSink === self {
+            camera.recordingSink = nil
+            camera.attachMicSilently(nil)
+        }
         mouse.stop()
         for w in [screenW, sysW, camW, micW] { await w?.finish() }
         writeMetadata(durationMs: endMs - startMs - pausedMs)

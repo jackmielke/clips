@@ -3,6 +3,7 @@ import SwiftUI
 import AVFoundation
 import Carbon.HIToolbox
 import Combine
+import UserNotifications
 
 /// A floating, non-activating panel: it never steals focus from what you're recording.
 final class FloatingPanel: NSPanel {
@@ -143,6 +144,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
         model.onLayoutChange = { [weak self] in self?.layout() }
+        UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        model.onPosted = { [weak self] u, link, error in self?.notifyPosted(u, link: link, error: error) }
+        model.$uploads.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.phaseChanged(self?.model.phase ?? .idle) }
+        }.store(in: &subs)
         model.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.phaseChanged(phase) }
         }.store(in: &subs)
@@ -234,7 +241,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.button?.image = NSImage(systemSymbolName: recording ? "record.circle.fill" : "record.circle",
                                        accessibilityDescription: "Clips")
         status.button?.contentTintColor = recording ? .systemRed : nil
-        if case .done = p { bar.orderFrontRegardless() }
     }
 
     @MainActor func hideBar() {
@@ -270,6 +276,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Uploads finish in the background, so say so wherever you are.
+    @MainActor func notifyPosted(_ u: Upload, link: URL?, error: String?) {
+        let c = UNMutableNotificationContent()
+        c.title = link != nil ? "Link copied" : "Couldn't post your clip"
+        c.body = link != nil ? u.title : (error ?? "Something went wrong")
+        if let link { c.userInfo = ["link": link.absoluteString] }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: u.id.uuidString, content: c, trigger: nil))
+    }
+
     @objc func copyLastLink() { MainActor.assumeIsolated { model.copyLink() } }
 
     @objc func openLibrary() {
@@ -302,3 +317,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        done([.banner, .sound])
+    }
+
+    /// Clicking "Link copied" opens the clip; clicking a failure brings the bar back with Retry.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler done: @escaping () -> Void) {
+        let link = (response.notification.request.content.userInfo["link"] as? String).flatMap(URL.init(string:))
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if let link { NSWorkspace.shared.open(link) } else { self.showBar() }
+            }
+        }
+        done()
+    }
+}

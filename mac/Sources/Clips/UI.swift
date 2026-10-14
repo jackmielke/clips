@@ -13,7 +13,6 @@ struct ControlBar: View {
             case .idle: idle
             case .countdown(let n): countdown(n)
             case .recording: recording
-            case .posting(let stage, let progress): posting(stage, progress)
             case .done(let url): DoneBar(m: m, url: url, hide: hide)
             case .failed(let msg): failed(msg)
             }
@@ -30,6 +29,7 @@ struct ControlBar: View {
 
     // Idle: pick sources, hit record.
     @ViewBuilder private var idle: some View {
+        uploadStatus
         Menu {
             ForEach(m.displays, id: \.displayID) { s in
                 Button { m.displayID = s.displayID } label: {
@@ -109,13 +109,23 @@ struct ControlBar: View {
         }
     }
 
-    private func posting(_ stage: String, _ progress: Double?) -> some View {
-        HStack(spacing: 10) {
-            Ring(progress: progress)
-            Text(progress.map { "\(stage) \(Int($0 * 100))%" } ?? "\(stage)…")
-                .font(.system(size: 13, weight: .medium)).monospacedDigit()
-                .contentTransition(.numericText())
-        }.padding(.horizontal, 12)
+    /// Background uploads, shown beside Record so you can start the next clip right away.
+    @ViewBuilder private var uploadStatus: some View {
+        if let u = m.uploads.first {
+            HStack(spacing: 8) {
+                Ring(progress: u.progress)
+                Text(u.progress.map { "\(u.stage) \(Int($0 * 100))%" } ?? "\(u.stage)…")
+                    .font(.system(size: 12, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.7))
+                    .contentTransition(.numericText())
+                if m.uploads.count > 1 {
+                    Text("+\(m.uploads.count - 1)").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.45))
+                }
+            }
+            .padding(.horizontal, 8)
+            .help("Posting in the background. You'll get a notification when the link is ready.")
+            Sep()
+        }
     }
 
     private func failed(_ msg: String) -> some View {
