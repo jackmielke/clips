@@ -25,6 +25,15 @@ def probe(path):
     return j['streams'][0]['width'], j['streams'][0]['height'], float(j['format']['duration'])
 
 
+def offset(path):
+    """When a track's first sample landed after the recording started, AVAssetWriter keeps the gap as
+    an empty edit (a mic or camera that takes a second or two to wake up). ffmpeg drops that gap when it
+    opens each file, so put it back by hand or the track plays early."""
+    out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'stream=start_time',
+                                   '-of', 'csv=p=0', path]).decode().split()
+    return max(0.0, min(float(x) for x in out if x not in ('', 'N/A'))) if out else 0.0
+
+
 def main(project, out):
     rec = os.path.join(project, 'recording')
     p = lambda name: os.path.join(rec, name)
@@ -95,18 +104,19 @@ def main(project, out):
     audio = [f for f in ('channel-3-microphone-0.m4a', 'channel-1-system-audio-0.m4a') if os.path.exists(p(f))]
 
     # Fixed input order: 0 screen, 1 mask, 2 ring, then cursors, then camera, then audio.
-    inputs = ['-i', p('channel-2-display-0.mp4'), '-loop', '1', '-i', mask,
+    shift = lambda f: ['-itsoffset', f'{offset(f):.3f}', '-i', f]
+    inputs = [*shift(p('channel-2-display-0.mp4')), '-loop', '1', '-i', mask,
               '-loop', '1', '-i', os.path.join(HERE, 'assets/ring.png')]
     for c in used:
         inputs += ['-loop', '1', '-i', p(f'cursors/{c}.png')]
     cam_i = 3 + len(used)
     if has_cam:
-        inputs += ['-i', p('channel-4-webcam-0.mp4')]
+        inputs += shift(p('channel-4-webcam-0.mp4'))
     a0 = cam_i + (1 if has_cam else 0)
     for f in audio:
         inputs += ['-i', p(f)]
 
-    g = [f"[0:v]fps={FPS},sendcmd=f='{cmdfile}'[bg0]"]
+    g = [f"[0:v]fps={FPS}:start_time=0,sendcmd=f='{cmdfile}'[bg0]"]
     for c in used:
         i = idx[c]
         g.append(f'[{3 + i}:v]scale={size[c][0]}:{size[c][1]},format=rgba[k{i}]')
@@ -117,15 +127,22 @@ def main(project, out):
         g.append(f'[{cam_i}:v]crop=min(iw\\,ih):min(iw\\,ih),scale={S}:{S},format=yuva420p[cam]')
         g.append(f'[1:v]format=gray,scale={S}:{S}[m]')
         g.append('[cam][m]alphamerge[camr]')
-        g.append(f'[bgr][camr]overlay={cam_x}:{cam_y}:shortest=1,{FINAL}[v]')
+        g.append(f'[bgr][camr]overlay={cam_x}:{cam_y}:eof_action=pass,{FINAL}[v]')
     else:
         g.append(f'[bgr]{FINAL}[v]')
     maps = ['-map', '[v]']
-    if len(audio) == 2:
-        g.append(f'[{a0}:a][{a0 + 1}:a]amix=inputs=2:normalize=0:duration=longest[a]')
+    # amix lines inputs up by their first sample, not their timestamps, so delay each track to where it
+    # really started. apad lets the screen decide where the clip ends (-shortest), so a mic that started
+    # late can't cut the ending off.
+    if audio:
+        for i, f in enumerate(audio):
+            ms = round(offset(p(f)) * 1000)
+            g.append(f'[{a0 + i}:a]adelay={ms}:all=1,apad=whole_dur={dur:.3f}[a{i}]')
+        if len(audio) == 2:
+            g.append('[a0][a1]amix=inputs=2:normalize=0:duration=longest[a]')
+        else:
+            g[-1] = g[-1][:-4] + '[a]'
         maps += ['-map', '[a]']
-    elif audio:
-        maps += ['-map', f'{a0}:a']
     print(f'DURATION {dur:.2f}', flush=True)
 
     subprocess.check_call(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-stats', '-y', *inputs,
