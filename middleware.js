@@ -1,9 +1,10 @@
 import { next } from '@vercel/functions';
 
-// The whole site sits behind one shared password (SITE_PASSWORD, "fun" by default) until clips can be
-// picked one by one. A right answer leaves a sitePass cookie for a year. The owner key (?key=, the
-// clipKey cookie or a Bearer header, as in api/_auth.js) skips the gate so the Mac app keeps working.
-export const config = { matcher: '/((?!jm-logo\\.png|apple-touch-icon\\.png|favicon\\.ico).*)' };
+// Only the home page, which lists every clip, needs the shared password (SITE_PASSWORD, "fun" by
+// default). Share links (/<slug>, /v/...) stay open. Without the password the home page shows just the
+// clips this browser has opened before (public/seen.js keeps that list). A right answer leaves a
+// sitePass cookie for a year, and the owner key (?key= or the clipKey cookie, as in api/_auth.js) skips it.
+export const config = { matcher: ['/', '/index.html', '/__unlock'] };
 
 const PASSWORD = process.env.SITE_PASSWORD || 'fun';
 const UNLOCK = '/__unlock';
@@ -30,16 +31,32 @@ const safeNext = (s) => (typeof s === 'string' && s.startsWith('/') && !s.starts
 
 const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// The locked home page: the password box, then the clips this browser has watched, drawn from localStorage.
 const gatePage = (to, wrong) => new Response(
-  '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Clips</title>' +
-  '<link rel="icon" href="/jm-logo.png"><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f5f2;color:#16161a;font:15px system-ui,sans-serif;text-align:center">' +
-  `<form method="post" action="${UNLOCK}" style="display:grid;gap:10px;width:min(280px,calc(100vw - 32px))">` +
-  '<div style="font-size:22px;font-weight:600">Password</div>' +
+  '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Clips</title>' +
+  '<link rel="icon" href="/jm-logo.png"><style>' +
+  ':root{--bg:#f6f5f2;--fg:#16161a;--muted:#6b6b73;--line:#d6d4cf;--field:#fff}' +
+  '@media (prefers-color-scheme:dark){:root{--bg:#0f0f11;--fg:#f2f2f3;--muted:#9a9aa3;--line:#2a2a2f;--field:#18181b}}' +
+  '*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px Inter,system-ui,sans-serif}' +
+  'main{max-width:1180px;margin:0 auto;padding:40px 16px 64px}' +
+  'form{display:grid;gap:10px;width:min(300px,100%);margin:8vh auto 0;text-align:center}' +
+  'h1{font-size:22px;font-weight:600;margin:0}p{color:var(--muted);margin:0 0 6px}' +
+  'input,button{font:inherit;padding:10px 12px;border-radius:10px}input{border:1px solid var(--line);background:var(--field);color:inherit}' +
+  'button{font-weight:600;border:0;background:var(--fg);color:var(--bg);cursor:pointer}.err{color:#d93025}' +
+  'h2{font-size:16px;font-weight:600;margin:56px 0 16px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px}' +
+  '.card{color:inherit;text-decoration:none;min-width:0}.thumb{aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}' +
+  '.thumb img{width:100%;height:100%;object-fit:cover;display:block}.t{font-weight:600;margin-top:10px;line-height:1.3}' +
+  '</style><body><main>' +
+  `<form method="post" action="${UNLOCK}"><h1>Clips</h1><p>Type the password to see every video.</p>` +
   `<input type="hidden" name="next" value="${esc(to)}">` +
-  '<input name="password" type="password" autofocus autocomplete="current-password" aria-label="Password" style="font:inherit;padding:10px 12px;border:1px solid #d6d4cf;border-radius:10px;background:#fff">' +
-  '<button style="font:inherit;font-weight:600;padding:10px 12px;border:0;border-radius:10px;background:#16161a;color:#fff;cursor:pointer">Open</button>' +
-  (wrong ? '<div style="color:#b3261e">That isn’t it. Try again.</div>' : '') +
-  '</form>',
+  '<input name="password" type="password" autofocus autocomplete="current-password" aria-label="Password">' +
+  '<button>Open</button>' +
+  (wrong ? '<div class="err">That isn’t it. Try again.</div>' : '') +
+  '</form><section id="seen" hidden><h2>Clips you’ve watched</h2><div class="grid" id="grid"></div></section></main>' +
+  '<script>try{var l=JSON.parse(localStorage.getItem("clipsSeen")||"[]"),g=document.getElementById("grid");' +
+  'l.forEach(function(c){if(!/^[0-9a-f]{8}$/.test(c.slug))return;var a=document.createElement("a");a.className="card";a.href="/"+c.slug;' +
+  'a.innerHTML=\'<div class="thumb"><img alt="" loading="lazy"></div><div class="t"></div>\';a.querySelector("img").src="/v/"+c.slug+"/poster.jpg";' +
+  'a.querySelector(".t").textContent=c.title||"Clip";g.appendChild(a)});if(g.children.length)document.getElementById("seen").hidden=false}catch(e){}</script>',
   { status: 401, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } },
 );
 
@@ -57,9 +74,6 @@ export default async function middleware(req) {
     });
   }
 
-  if (cookie(req, 'sitePass') === pass || isOwner(req, url)) return next();
-
-  // Videos and API calls get a plain 401; pages get the password form.
-  if (url.pathname.startsWith('/v/') || url.pathname.startsWith('/api/')) return new Response('Password required', { status: 401 });
-  return gatePage(url.pathname + url.search, false);
+  if (url.pathname === UNLOCK || cookie(req, 'sitePass') === pass || isOwner(req, url)) return next();
+  return gatePage('/', false);
 }

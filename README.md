@@ -23,7 +23,7 @@ export CLIPS_ORIGIN=https://your-project.vercel.app   # used for link previews
 Needs macOS, ffmpeg (with VideoToolbox), Python 3, Node, and the Vercel CLI. The Mac app expects the repo at `~/dev/clips` (`AppModel.repo`). Swap `public/jm-logo.png` for your own favicon.
 
 ## Password gate
-`middleware.js` puts the whole site (pages, videos, API) behind one shared password, `fun` unless `SITE_PASSWORD` is set in Vercel. A right answer is remembered for a year. The owner key (`?key=`, the clipKey cookie, or the Mac app's Bearer header) skips it. Link previews in iMessage and Slack show the password page while the gate is on.
+`middleware.js` locks the home page, which lists every clip, behind one shared password: `fun` unless `SITE_PASSWORD` is set in Vercel. Share links (`/<slug>`, `/v/...`) stay open. Without the password the home page shows only the clips that browser has opened before (`public/seen.js` remembers them). A right answer is remembered for a year, and the owner key (`?key=` or the clipKey cookie) skips it.
 
 ## Library
 `/library` lists every clip for whoever holds the key (same `?key=` sign-in). The list comes from `api/_clips.json`, which `add-clip.sh` updates and which is bundled into the function, so it is never served as a public file. It is gitignored like the clips themselves.
