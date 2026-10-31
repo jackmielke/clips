@@ -85,6 +85,10 @@ final class TrackWriter {
     let input: AVAssetWriterInput
     private var started = false
     private let lock = NSLock()
+    /// Audio only: where the next sample should land. An m4a stores samples back to back with no
+    /// timestamps, so a buffer that never arrives (or that the writer refuses) would pull everything
+    /// after it earlier and the voice slowly runs ahead of the picture. Holes get filled with silence.
+    private var nextAudio: CMTime?
 
     init(url: URL, type: AVFileType, input: AVAssetWriterInput) throws {
         try? FileManager.default.removeItem(at: url)
@@ -103,7 +107,29 @@ final class TrackWriter {
             writer.startSession(atSourceTime: start)
             started = true
         }
-        if writer.status == .writing, input.isReadyForMoreMediaData { input.append(sb) }
+        guard writer.status == .writing, input.isReadyForMoreMediaData else { return }
+        guard input.mediaType == .audio, let asbd = sb.formatDescription?.audioStreamBasicDescription else {
+            input.append(sb); return
+        }
+        let pts = sb.presentationTimeStamp
+        let rate = CMTimeScale(asbd.mSampleRate.rounded())
+        if let next = nextAudio {
+            let gap = CMTimeSubtract(pts, next)
+            // Overlapping what's already written: skip it rather than push the timeline later.
+            if gap.seconds < -0.010 { return }
+            if gap.seconds > 0.010 {
+                var at = next
+                while at < pts, input.isReadyForMoreMediaData {
+                    let to = min(pts, CMTimeAdd(at, CMTime(value: 1, timescale: 1)))
+                    guard let quiet = silence(like: sb, asbd: asbd, from: at, to: to) else { break }
+                    input.append(quiet)
+                    at = to
+                }
+            }
+        }
+        if input.isReadyForMoreMediaData, input.append(sb) {
+            nextAudio = CMTimeAdd(pts, CMTime(value: CMTimeValue(sb.numSamples), timescale: rate))
+        }
     }
 
     func finish() async {
@@ -114,6 +140,27 @@ final class TrackWriter {
         input.markAsFinished()
         await writer.finishWriting()
     }
+}
+
+/// Silent PCM in the same format as `sb`, covering `from` up to `to`.
+func silence(like sb: CMSampleBuffer, asbd: AudioStreamBasicDescription, from: CMTime, to: CMTime) -> CMSampleBuffer? {
+    guard asbd.mFormatID == kAudioFormatLinearPCM, let fmt = sb.formatDescription else { return nil }
+    let frames = Int((CMTimeSubtract(to, from).seconds * asbd.mSampleRate).rounded())
+    guard frames > 0 else { return nil }
+    let planes = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 ? Int(asbd.mChannelsPerFrame) : 1
+    let bytes = frames * Int(asbd.mBytesPerFrame) * planes
+    var block: CMBlockBuffer?
+    guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: bytes,
+                                             blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+                                             dataLength: bytes, flags: kCMBlockBufferAssureMemoryNowFlag,
+                                             blockBufferOut: &block) == kCMBlockBufferNoErr, let block,
+          CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes) == kCMBlockBufferNoErr
+    else { return nil }
+    var out: CMSampleBuffer?
+    CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: fmt,
+                                                         sampleCount: frames, presentationTimeStamp: from,
+                                                         packetDescriptions: nil, sampleBufferOut: &out)
+    return out
 }
 
 /// Records screen, system audio, camera, mic and the mouse into the same folder layout Screen
@@ -313,10 +360,12 @@ final class CameraController: NSObject {
     private var camInput: AVCaptureDeviceInput?
     private var micInput: AVCaptureDeviceInput?
     private let q = DispatchQueue(label: "clips.camera")
+    /// The mic gets its own queue so a slow camera frame can never hold up (and drop) audio.
+    private let micQ = DispatchQueue(label: "clips.mic")
     weak var recordingSink: (AVCaptureVideoDataOutputSampleBufferDelegate & AVCaptureAudioDataOutputSampleBufferDelegate)? {
         didSet {
             videoOut.setSampleBufferDelegate(recordingSink, queue: q)
-            audioOut.setSampleBufferDelegate(recordingSink, queue: q)
+            audioOut.setSampleBufferDelegate(recordingSink, queue: micQ)
         }
     }
 

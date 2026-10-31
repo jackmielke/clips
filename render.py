@@ -34,11 +34,17 @@ def offset(path):
     return max(0.0, min(float(x) for x in out if x not in ('', 'N/A'))) if out else 0.0
 
 
+def audio_secs(path):
+    out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path])
+    return float(out.split()[0])
+
+
 def main(project, out):
     rec = os.path.join(project, 'recording')
     p = lambda name: os.path.join(rec, name)
     meta = {r['id']: r for r in json.load(open(p('metadata.json')))['recorders']}
     start = meta['channel-2-display']['sessions'][0]['processTimeStartMs']
+    session_secs = meta['channel-2-display']['sessions'][0].get('durationMs', 0) / 1000
     # The Clips recorder may scale its display track; event coords stay in points.
     W, H, dur = probe(p('channel-2-display-0.mp4'))
     pts_w = meta['channel-2-display'].get('configuration', {}).get('pointWidth')
@@ -136,8 +142,17 @@ def main(project, out):
     # late can't cut the ending off.
     if audio:
         for i, f in enumerate(audio):
-            ms = round(offset(p(f)) * 1000)
-            g.append(f'[{a0 + i}:a]adelay={ms}:all=1,apad=whole_dur={dur:.3f}[a{i}]')
+            off = offset(p(f))
+            # Recordings made before the recorder filled audio gaps lost the odd mic buffer, so the
+            # voice crept ahead of the picture. When the mic covers noticeably less time than the
+            # session, spread it back over the whole session.
+            fix = ''
+            want = session_secs - off
+            if f.startswith('channel-3') and want > 0:
+                have = audio_secs(p(f))
+                if 0.1 < want - have < want * 0.03:
+                    fix = f'atempo={have / want:.6f},'
+            g.append(f'[{a0 + i}:a]{fix}adelay={round(off * 1000)}:all=1,apad=whole_dur={dur:.3f}[a{i}]')
         if len(audio) == 2:
             g.append('[a0][a1]amix=inputs=2:normalize=0:duration=longest[a]')
         else:
