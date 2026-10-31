@@ -12,6 +12,8 @@ CAM = 600            # facecam square size in px
 CAM_RADIUS = 70
 CAM_MARGIN = 60
 RING_SECS = 0.3
+# Extra delay for the mic track, for a recording whose voice still lands early (MIC_DELAY=0.3 render.py ...).
+MIC_DELAY = float(os.environ.get('MIC_DELAY', 0))
 # The render is the published file (add-clip.sh copies it as-is), so finish at web size here
 # instead of encoding a big master and re-encoding it twice more.
 FINAL = "scale='min(1920,iw)':-2,format=yuv420p"
@@ -152,7 +154,8 @@ def main(project, out):
                 have = audio_secs(p(f))
                 if 0.1 < want - have < want * 0.03:
                     fix = f'atempo={have / want:.6f},'
-            g.append(f'[{a0 + i}:a]{fix}adelay={round(off * 1000)}:all=1,apad=whole_dur={dur:.3f}[a{i}]')
+            late = off + (MIC_DELAY if f.startswith('channel-3') else 0)
+            g.append(f'[{a0 + i}:a]{fix}adelay={round(late * 1000)}:all=1,apad=whole_dur={dur:.3f}[a{i}]')
         if len(audio) == 2:
             g.append('[a0][a1]amix=inputs=2:normalize=0:duration=longest[a]')
         else:
