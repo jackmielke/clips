@@ -1,6 +1,6 @@
 // Prints "seconds,mouth-open" for every frame of a webcam video, using Apple's face landmarks.
 // Mouth open is the inner lips' height as a fraction of the face, or -1 when no face is found.
-// Usage: swift mouth.swift <webcam.mp4>   (used by avsync.py)
+// Usage: swift mouth.swift <webcam.mp4> [max seconds]   (used by avsync.py)
 import AVFoundation
 import Vision
 
@@ -10,8 +10,10 @@ let reader = try AVAssetReader(asset: asset)
 let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
     kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange])
 reader.add(output)
+let limit = CommandLine.arguments.count > 2 ? Double(CommandLine.arguments[2]) ?? .infinity : .infinity
 reader.startReading()
 while let sb = output.copyNextSampleBuffer() {
+    if sb.presentationTimeStamp.seconds > limit { break }
     guard let px = CMSampleBufferGetImageBuffer(sb) else { continue }
     let req = VNDetectFaceLandmarksRequest()
     try? VNImageRequestHandler(cvPixelBuffer: px, options: [:]).perform([req])

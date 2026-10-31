@@ -3,11 +3,9 @@
 against the loudness of the mic track. Prints how early (+) or late (-) the voice is versus the face.
 On a Mac it reads the mouth with Apple's face landmarks (mouth.swift); elsewhere it falls back to
 plain motion in the middle of the frame, which is much noisier.
-Usage: avsync.py <project>/recording"""
+Usage: avsync.py <project>/recording   (render.py also imports measure() to fix sync on its own)"""
 import array, math, os, shutil, subprocess, sys
 
-rec = sys.argv[1]
-cam, mic = os.path.join(rec, 'channel-4-webcam-0.mp4'), os.path.join(rec, 'channel-3-microphone-0.m4a')
 HZ = 100          # common grid, 10 ms
 MAXLAG = 1.0      # seconds searched each way
 
@@ -17,11 +15,11 @@ def start(f):
                                                    '-of', 'csv=p=0', f]).split()[0]))
 
 
-def face_motion():
+def face_motion(cam, max_secs):
     # Middle of the frame, where the face sits in the square bubble; frame-to-frame change.
     vf = ("crop=ih*0.55:ih*0.55:(iw-ih*0.55)/2:ih*0.3,scale=64:64,format=gray,"
           "tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-")
-    out = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', cam, '-vf', vf, '-an', '-f', 'null', '-']).decode()
+    out = subprocess.check_output(['ffmpeg', '-v', 'error', '-t', str(max_secs or 1e6), '-i', cam, '-vf', vf, '-an', '-f', 'null', '-']).decode()
     pts, vals, t = [], [], None
     for line in out.splitlines():
         if line.startswith('frame:'):
@@ -32,12 +30,12 @@ def face_motion():
     return [p + off for p in pts], vals
 
 
-def mouth_open():
-    out = subprocess.check_output(['swift', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mouth.swift'), cam],
+def mouth_open(cam, max_secs):
+    out = subprocess.check_output(['swift', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mouth.swift'), cam,
+                                   str(max_secs or 1e6)],
                                   stderr=subprocess.DEVNULL).decode()
     rows = [tuple(map(float, l.split(','))) for l in out.split() if ',' in l]
     seen = [r for r in rows if r[1] >= 0]
-    print(f'face found in {len(seen)}/{len(rows)} frames')
     pts, vals = [r[0] for r in seen], [r[1] for r in seen]
     # AVAssetReader may already place frames on the recording's timeline; only add the offset if not.
     off = start(cam)
@@ -46,7 +44,7 @@ def mouth_open():
     return pts, vals
 
 
-def voice_level():
+def voice_level(mic):
     SR = 16000
     raw = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', mic, '-af', 'highpass=f=100,lowpass=f=4000',
                                    '-ac', '1', '-ar', str(SR), '-f', 's16le', '-'])
@@ -100,14 +98,30 @@ def best_lag(v, a, lo, hi):
     return -lag / HZ, r
 
 
-ts, vs = mouth_open() if shutil.which('swift') and sys.platform == 'darwin' else face_motion()
-moff, env = voice_level()
-n = int(min(ts[-1], moff + len(env) / HZ) * HZ)
-v = detrend(to_grid(ts, vs, n))
-a = detrend(to_grid([moff + i / HZ for i in range(len(env))], env, n))
-early, r = best_lag(v, a, 0, n)
-print(f'whole recording: voice early by {early:+.3f}s  (match {r:.2f})')
-W = 30 * HZ
-for lo in range(0, n - W // 2, W):
-    e, r = best_lag(v, a, lo, min(n, lo + W))
-    print(f'{lo / HZ:6.0f}s-{min(n, lo + W) / HZ:4.0f}s: voice early by {e:+.3f}s  (match {r:.2f})')
+def measure(rec, max_secs=None):
+    """(seconds the voice is early, match 0-1, [(window start, early, match)...]) or None."""
+    cam, mic = os.path.join(rec, 'channel-4-webcam-0.mp4'), os.path.join(rec, 'channel-3-microphone-0.m4a')
+    if not (os.path.exists(cam) and os.path.exists(mic)):
+        return None
+    mac = shutil.which('swift') and sys.platform == 'darwin'
+    ts, vs = mouth_open(cam, max_secs) if mac else face_motion(cam, max_secs)
+    if len(ts) < 2:
+        return None
+    moff, env = voice_level(mic)
+    n = int(min(ts[-1], moff + len(env) / HZ) * HZ)
+    v = detrend(to_grid(ts, vs, n))
+    a = detrend(to_grid([moff + i / HZ for i in range(len(env))], env, n))
+    early, r = best_lag(v, a, 0, n)
+    W = 30 * HZ
+    windows = [(lo / HZ, *best_lag(v, a, lo, min(n, lo + W))) for lo in range(0, n - W // 2, W)]
+    return early, r, windows
+
+
+if __name__ == '__main__':
+    m = measure(sys.argv[1])
+    if not m:
+        sys.exit('needs a webcam and a mic track')
+    early, r, windows = m
+    print(f'whole recording: voice early by {early:+.3f}s  (match {r:.2f})')
+    for lo, e, wr in windows:
+        print(f'{lo:6.0f}s: voice early by {e:+.3f}s  (match {wr:.2f})')

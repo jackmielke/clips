@@ -12,8 +12,11 @@ CAM = 600            # facecam square size in px
 CAM_RADIUS = 70
 CAM_MARGIN = 60
 RING_SECS = 0.3
-# Extra delay for the mic track, for a recording whose voice still lands early (MIC_DELAY=0.3 render.py ...).
-MIC_DELAY = float(os.environ.get('MIC_DELAY', 0))
+# The mic's timestamps can be off from the camera's by a fixed amount (0.76s on one recording), so on
+# a Mac the render measures lip sync itself (avsync.py) and moves the mic to match. MIC_DELAY=<secs>
+# overrides that by hand; MIC_DELAY=0 turns it off.
+MIC_DELAY = os.environ.get('MIC_DELAY') or None
+SYNC_SECS = 120      # how much of the recording to measure; the offset holds steady, so this is plenty
 # The render is the published file (add-clip.sh copies it as-is), so finish at web size here
 # instead of encoding a big master and re-encoding it twice more.
 FINAL = "scale='min(1920,iw)':-2,format=yuv420p"
@@ -36,9 +39,27 @@ def offset(path):
     return max(0.0, min(float(x) for x in out if x not in ('', 'N/A'))) if out else 0.0
 
 
-def audio_secs(path):
-    out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path])
-    return float(out.split()[0])
+def mic_delay(rec):
+    """Seconds to push the mic later so the voice lands on the lips, or 0 when unsure."""
+    if MIC_DELAY is not None:
+        return float(MIC_DELAY)
+    if sys.platform != 'darwin':
+        return 0.0   # the frame-motion fallback is too noisy to act on
+    try:
+        sys.path.insert(0, HERE)
+        from avsync import measure
+        m = measure(rec, SYNC_SECS)
+    except Exception as e:
+        print(f'SYNC skipped: {e}', flush=True)
+        return 0.0
+    if not m:
+        return 0.0
+    early, match, windows = m
+    good = [e for _, e, r in windows if r >= 0.15]
+    steady = len(good) < 2 or max(good) - min(good) < 0.15
+    ok = match >= 0.25 and steady and abs(early) < 1.5
+    print(f'SYNC voice early by {early:+.3f}s (match {match:.2f}){"" if ok else ", not confident, left alone"}', flush=True)
+    return early if ok else 0.0
 
 
 def main(project, out):
@@ -46,7 +67,6 @@ def main(project, out):
     p = lambda name: os.path.join(rec, name)
     meta = {r['id']: r for r in json.load(open(p('metadata.json')))['recorders']}
     start = meta['channel-2-display']['sessions'][0]['processTimeStartMs']
-    session_secs = meta['channel-2-display']['sessions'][0].get('durationMs', 0) / 1000
     # The Clips recorder may scale its display track; event coords stay in points.
     W, H, dur = probe(p('channel-2-display-0.mp4'))
     pts_w = meta['channel-2-display'].get('configuration', {}).get('pointWidth')
@@ -143,19 +163,11 @@ def main(project, out):
     # really started. apad lets the screen decide where the clip ends (-shortest), so a mic that started
     # late can't cut the ending off.
     if audio:
+        sync = mic_delay(rec) if 'channel-3-microphone-0.m4a' in audio and has_cam else 0.0
         for i, f in enumerate(audio):
-            off = offset(p(f))
-            # Recordings made before the recorder filled audio gaps lost the odd mic buffer, so the
-            # voice crept ahead of the picture. When the mic covers noticeably less time than the
-            # session, spread it back over the whole session.
-            fix = ''
-            want = session_secs - off
-            if f.startswith('channel-3') and want > 0:
-                have = audio_secs(p(f))
-                if 0.1 < want - have < want * 0.03:
-                    fix = f'atempo={have / want:.6f},'
-            late = off + (MIC_DELAY if f.startswith('channel-3') else 0)
-            g.append(f'[{a0 + i}:a]{fix}adelay={round(late * 1000)}:all=1,apad=whole_dur={dur:.3f}[a{i}]')
+            late = offset(p(f)) + (sync if f.startswith('channel-3') else 0)
+            cut = f'atrim=start={-late:.3f},asetpts=PTS-STARTPTS,' if late < 0 else ''
+            g.append(f'[{a0 + i}:a]{cut}adelay={round(max(0, late) * 1000)}:all=1,apad=whole_dur={dur:.3f}[a{i}]')
         if len(audio) == 2:
             g.append('[a0][a1]amix=inputs=2:normalize=0:duration=longest[a]')
         else:
