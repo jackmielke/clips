@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Measure lip sync in a Clips recording by matching face motion in the webcam track against the
-loudness of the mic track. Prints how early (+) or late (-) the voice is versus the face.
+"""Measure lip sync in a Clips recording by matching how open the mouth is in the webcam track
+against the loudness of the mic track. Prints how early (+) or late (-) the voice is versus the face.
+On a Mac it reads the mouth with Apple's face landmarks (mouth.swift); elsewhere it falls back to
+plain motion in the middle of the frame, which is much noisier.
 Usage: avsync.py <project>/recording"""
-import array, math, os, subprocess, sys
+import array, math, os, shutil, subprocess, sys
 
 rec = sys.argv[1]
 cam, mic = os.path.join(rec, 'channel-4-webcam-0.mp4'), os.path.join(rec, 'channel-3-microphone-0.m4a')
@@ -28,6 +30,20 @@ def face_motion():
             pts.append(t); vals.append(float(line.split('=')[1]))
     off = start(cam)
     return [p + off for p in pts], vals
+
+
+def mouth_open():
+    out = subprocess.check_output(['swift', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mouth.swift'), cam],
+                                  stderr=subprocess.DEVNULL).decode()
+    rows = [tuple(map(float, l.split(','))) for l in out.split() if ',' in l]
+    seen = [r for r in rows if r[1] >= 0]
+    print(f'face found in {len(seen)}/{len(rows)} frames')
+    pts, vals = [r[0] for r in seen], [r[1] for r in seen]
+    # AVAssetReader may already place frames on the recording's timeline; only add the offset if not.
+    off = start(cam)
+    if pts and abs(pts[0] - off) > 0.1:
+        pts = [p + off for p in pts]
+    return pts, vals
 
 
 def voice_level():
@@ -84,7 +100,7 @@ def best_lag(v, a, lo, hi):
     return -lag / HZ, r
 
 
-ts, vs = face_motion()
+ts, vs = mouth_open() if shutil.which('swift') and sys.platform == 'darwin' else face_motion()
 moff, env = voice_level()
 n = int(min(ts[-1], moff + len(env) / HZ) * HZ)
 v = detrend(to_grid(ts, vs, n))
