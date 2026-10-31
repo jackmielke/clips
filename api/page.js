@@ -23,7 +23,10 @@ export default async function handler(req, res) {
   if (!validSlug(slug)) return notFound(res);
   if (!isOwner(req) && (await readPrivate()).has(slug)) return privatePage(res);
   const base = `https://${req.headers.host}`;
-  const [pageRes, title] = await Promise.all([fetch(`${base}/c/${slug}.html`), readTitle(slug)]);
+  let [pageRes, title] = await Promise.all([fetch(`${base}/c/${slug}.html`), readTitle(slug)]);
+  // A clip that was just posted is in R2 before the deploy carrying it finishes (add-clip.sh).
+  const media = (process.env.CLIPS_MEDIA_URL || '').replace(/\/$/, '');
+  if (!pageRes.ok && media) pageRes = await fetch(`${media}/c/${slug}.html`);
   if (!pageRes.ok) return notFound(res);
   let html = await pageRes.text();
   if (title) {

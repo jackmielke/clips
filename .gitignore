@@ -11,3 +11,4 @@ api/_clips.json
 # local copies of videos already uploaded to R2
 media/
 __pycache__/
+.deploy.log

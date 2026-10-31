@@ -42,5 +42,13 @@ sed -e "s|{{TITLE}}|$TITLE|g" -e "s|{{SLUG}}|$SLUG|g" -e "s|{{ORIGIN}}|$ORIGIN|g
 python3 register-clip.py "$SLUG" "$TITLE" "$SECS" "$W" "$H" "$(date -r "$IN" -u +%Y-%m-%dT%H:%M:%SZ)"
 python3 build-index.py
 ./offload-media.sh "$SLUG"   # to R2, when set up
-[ -n "$SKIP_DEPLOY" ] || npx --yes vercel@latest deploy --prod --yes >/dev/null
+if [ -f .env.r2 ] && [ -z "$SKIP_DEPLOY" ]; then
+  # The deploy takes a minute or two. With the page and poster in R2 too, the link works right away
+  # (api/page.js and api/media.js fall back to the bucket), so the deploy finishes in the background.
+  python3 r2.py put "public/c/$SLUG.html" "c/$SLUG.html"
+  python3 r2.py put "$OUT/poster.jpg" "v/$SLUG/poster.jpg"
+  ( npx --yes vercel@latest deploy --prod --yes ) > .deploy.log 2>&1 &!
+elif [ -z "$SKIP_DEPLOY" ]; then
+  npx --yes vercel@latest deploy --prod --yes >/dev/null
+fi
 echo "$ORIGIN/$SLUG"
