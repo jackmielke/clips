@@ -28,7 +28,9 @@ elif [ ! -f .env.r2 ] && [ "$(stat -f%z "$OUT/save.mp4")" -gt 95000000 ]; then
     -hls_playlist_type vod -hls_segment_filename "$OUT/s%03d.ts" "$OUT/index.m3u8"
   rm -f "$OUT/save.mp4"; STREAM=hls
 fi
-[ -f "$OUT/poster.jpg" ] || ffmpeg -hide_banner -loglevel error -y -ss 5 -i "$IN" -frames:v 1 -vf scale=1280:-2 -q:v 4 "$OUT/poster.jpg"
+# Poster from 5 s in, or from the middle of a clip shorter than 10 s (seeking past the end writes nothing).
+AT=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$IN" | awk '{ t = $1 / 2; print (t < 5 ? t : 5) }')
+[ -f "$OUT/poster.jpg" ] || ffmpeg -hide_banner -loglevel error -y -ss "$AT" -i "$IN" -frames:v 1 -vf scale=1280:-2,format=yuvj420p -q:v 4 "$OUT/poster.jpg"
 SECS=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$IN" | cut -d. -f1)
 DUR="$((SECS/60)):$(printf %02d $((SECS%60)))"
 read W H <<< "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$IN" | tr x ' ')"
