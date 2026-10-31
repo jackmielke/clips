@@ -181,8 +181,11 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private let camera: CameraController
     private var stream: SCStream?
     private var screenW: TrackWriter?, sysW: TrackWriter?, camW: TrackWriter?, micW: TrackWriter?
+    /// Invalid until go(): CMTime counts invalid as later than any time, so nothing is written before then.
     private var start = CMTime.invalid
+    private let startLock = NSLock()
     private var startMs: Double = 0
+    private var displayID: CGDirectDisplayID = 0
     private var pointWidth: CGFloat = 0
     private var cameraRect: CGRect?
     private let mouse = MouseLogger()
@@ -197,7 +200,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         self.camera = camera
     }
 
-    @MainActor func begin(_ o: Options) async throws {
+    /// Everything slow (permissions, writers, the mic, starting the stream) happens here, during the
+    /// countdown. Samples arrive but are dropped until go(), so the clip starts the moment it ends.
+    @MainActor func prepare(_ o: Options) async throws {
         try FileManager.default.createDirectory(at: rec, withIntermediateDirectories: true)
 
         let content: SCShareableContent
@@ -255,8 +260,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         }
 
         cameraRect = o.cameraRect
-        start = CMClockGetTime(CMClockGetHostTimeClock())
-        startMs = start.seconds * 1000
+        displayID = display.displayID
 
         camera.recordingSink = self
         try camera.attachMic(o.mic)
@@ -266,8 +270,14 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         if o.systemAudio { try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQ) }
         try await s.startCapture()
         stream = s
+    }
 
-        mouse.start(display: display.displayID, folder: rec, startMs: startMs, pauses: pauses)
+    /// Starts the clip: every track's zero is now.
+    @MainActor func go() {
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
+        startLock.lock(); start = now; startLock.unlock()
+        startMs = now.seconds * 1000
+        mouse.start(display: displayID, folder: rec, startMs: startMs, pauses: pauses)
     }
 
     var isPaused: Bool { pauses.isPaused }
@@ -347,6 +357,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
 
     private func write(_ sb: CMSampleBuffer, to w: TrackWriter?) {
         guard let w, let shift = pauses.shift(for: sb) else { return }
+        startLock.lock(); let start = self.start; startLock.unlock()
         w.append(shift == .zero ? sb : retimed(sb, by: CMTimeMultiply(shift, multiplier: -1)), start: start)
     }
 }

@@ -60,6 +60,7 @@ struct ControlBar: View {
                 Text("Record").font(.system(size: 13, weight: .semibold))
                 Text("⌥⇧R").font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.4))
             }
+            .fixedSize()   // never wrap "Record" onto two lines
             .padding(.horizontal, 14).frame(height: 36)
             .background(Capsule().fill(.white.opacity(0.12)))
             .contentShape(Capsule())
@@ -118,6 +119,7 @@ struct ControlBar: View {
                     .font(.system(size: 12, weight: .medium)).monospacedDigit()
                     .foregroundStyle(.white.opacity(0.7))
                     .contentTransition(.numericText())
+                    .lineLimit(1).fixedSize()
                 if u.localReady {
                     IconButton(icon: "play.fill", on: true, help: "Watch it now, while it uploads") {
                         NSWorkspace.shared.open(u.localFile)

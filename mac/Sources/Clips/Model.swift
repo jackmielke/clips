@@ -118,37 +118,46 @@ final class AppModel: ObservableObject {
 
     func startCountdown() {
         if micOn { AVCaptureDevice.requestAccess(for: .audio) { _ in } }
+        // Starting capture takes a second or two, so it runs during the countdown instead of after it.
+        let prep = Task { await prepare() }
         countdownTask = Task {
             for n in [3, 2, 1] {
                 phase = .countdown(n)
                 NSSound(named: "Tink")?.play()
                 try? await Task.sleep(for: .milliseconds(800))
-                if Task.isCancelled { return }
+                if Task.isCancelled { Task { await prep.value?.cancel() }; return }
             }
-            await begin()
-        }
-    }
-
-    func cancelCountdown() { countdownTask?.cancel(); phase = .idle }
-
-    private func begin() async {
-        let stamp = Self.stamp.string(from: Date())
-        let r = Recorder(folder: Self.library.appendingPathComponent(stamp), camera: camera)
-        r.onStreamError = { [weak self] msg in self?.fail("Recording stopped: \(msg)") }
-        do {
-            try await r.begin(.init(displayID: displayID,
-                                    camera: cameraOn ? camera.cameraDevice : nil,
-                                    mic: micOn ? selectedMic : nil,
-                                    systemAudio: systemAudioOn,
-                                    cameraRect: cameraOn ? cameraRect : nil))
+            guard let r = await prep.value else { return }   // prepare() already showed what went wrong
+            if Task.isCancelled { await r.cancel(); return }
+            r.go()
             recorder = r
             startedAt = Date()
             pausedSince = nil
             pausedTotal = 0
             phase = .recording
+        }
+    }
+
+    func cancelCountdown() { countdownTask?.cancel(); phase = .idle }
+
+    private func prepare() async -> Recorder? {
+        let stamp = Self.stamp.string(from: Date())
+        let r = Recorder(folder: Self.library.appendingPathComponent(stamp), camera: camera)
+        r.onStreamError = { [weak self] msg in self?.fail("Recording stopped: \(msg)") }
+        do {
+            try await r.prepare(.init(displayID: displayID,
+                                      camera: cameraOn ? camera.cameraDevice : nil,
+                                      mic: micOn ? selectedMic : nil,
+                                      systemAudio: systemAudioOn,
+                                      cameraRect: cameraOn ? cameraRect : nil))
+            return r
         } catch {
             await r.cancel()
-            fail(error.localizedDescription)
+            if case .countdown = phase {
+                countdownTask?.cancel()
+                fail(error.localizedDescription)
+            }
+            return nil
         }
     }
 
@@ -200,6 +209,7 @@ final class AppModel: ObservableObject {
     }
 
     func fail(_ msg: String) {
+        countdownTask?.cancel()
         if let r = recorder { recorder = nil; Task { _ = await r.finish() } }
         phase = .failed(msg)
     }
