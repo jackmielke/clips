@@ -358,6 +358,81 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    // MARK: Screenshots (screencapture + shot.sh)
+
+    nonisolated static let shots = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Pictures/Clips")
+    private var shooting = false
+    /// Called when a screenshot's link is ready (or why it isn't), for the notification.
+    var onShot: ((URL?, String?) -> Void)?
+
+    /// Apple's own picker: drag a region, or press Space and click a window. The image is on the clipboard
+    /// right away; once it's uploaded, the clipboard holds the image and its link together, so chat apps
+    /// paste the picture and text fields paste the link. `done` runs when the picker closes.
+    func screenshot(done: @escaping () -> Void) {
+        guard !shooting else { return }
+        shooting = true
+        try? FileManager.default.createDirectory(at: Self.shots, withIntermediateDirectories: true)
+        let file = Self.shots.appendingPathComponent("Screenshot " + Self.stamp.string(from: Date()) + ".png")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        p.arguments = ["-i", file.path]
+        p.terminationHandler = { _ in
+            Task { @MainActor in
+                self.shooting = false
+                done()
+                self.shotTaken(file)
+            }
+        }
+        do { try p.run() } catch { shooting = false; done(); onShot?(nil, "Couldn't open the screenshot picker") }
+    }
+
+    private func shotTaken(_ file: URL) {
+        // Escape in the picker writes no file.
+        guard let png = try? Data(contentsOf: file), let image = NSImage(data: png) else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        let item = NSPasteboardItem()
+        item.setData(png, forType: .png)
+        if let tiff = image.tiffRepresentation { item.setData(tiff, forType: .tiff) }
+        pb.writeObjects([item])
+        let copiedAt = pb.changeCount
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = [Self.repo.appendingPathComponent("shot.sh").path, file.path]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        p.environment = env
+        let out = Pipe(), err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        p.terminationHandler = { proc in
+            let stdout = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let stderr = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let link = stdout.split(whereSeparator: \.isNewline).last { $0.hasPrefix("https://") }.flatMap { URL(string: String($0)) }
+            Task { @MainActor in
+                guard proc.terminationStatus == 0, let link else {
+                    let why = stderr.split(whereSeparator: \.isNewline).last.map(String.init) ?? "unknown error"
+                    self.onShot?(nil, "The image is on your clipboard, but the upload failed: \(why)")
+                    return
+                }
+                self.lastLink = link
+                // Only add the link if nothing else was copied while it uploaded.
+                if pb.changeCount == copiedAt {
+                    pb.clearContents()
+                    let both = NSPasteboardItem()
+                    both.setData(png, forType: .png)
+                    if let tiff = image.tiffRepresentation { both.setData(tiff, forType: .tiff) }
+                    both.setString(link.absoluteString, forType: .string)
+                    pb.writeObjects([both])
+                }
+                NSSound(named: "Glass")?.play()
+                self.onShot?(link, nil)
+            }
+        }
+        do { try p.run() } catch { onShot?(nil, "Couldn't start the upload: \(error.localizedDescription)") }
+    }
+
     func reset() { phase = .idle }
 
     func retryPost() {

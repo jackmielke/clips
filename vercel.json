@@ -6,6 +6,10 @@
       "destination": "/api/page?slug=:slug"
     },
     {
+      "source": "/s/:slug([0-9a-f]{8})",
+      "destination": "/api/shot?slug=:slug"
+    },
+    {
       "source": "/v/:path*",
       "destination": "/api/media?path=:path*"
     }

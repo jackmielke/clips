@@ -81,13 +81,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var status: NSStatusItem!
     var hotKey: EventHotKeyRef?
     var pauseHotKey: EventHotKeyRef?
+    var shotHotKey: EventHotKeyRef?
     var subs = Set<AnyCancellable>()
     var userMovedBar = false
 
-    /// clips://toggle, clips://start, clips://stop, clips://pause, clips://show — for Raycast, Shortcuts, voice, and Claude.
+    /// clips://toggle, clips://start, clips://stop, clips://pause, clips://shot, clips://show — for Raycast, Shortcuts, voice, and Claude.
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
             for url in urls {
+                if url.host == "shot" { takeScreenshot(); continue }
                 switch url.host {
                 case "toggle": model.toggle()
                 case "start": if case .recording = model.phase {} else { model.startCountdown() }
@@ -147,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         model.onPosted = { [weak self] u, link, error in self?.notifyPosted(u, link: link, error: error) }
+        model.onShot = { [weak self] link, error in self?.notifyShot(link: link, error: error) }
         model.$uploads.sink { [weak self] _ in
             DispatchQueue.main.async { self?.phaseChanged(self?.model.phase ?? .idle) }
         }.store(in: &subs)
@@ -168,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(appItem)
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Show Recording Bar", action: #selector(showBarAction), keyEquivalent: "n").target = self
+        appMenu.addItem(withTitle: "Take Screenshot", action: #selector(screenshotAction), keyEquivalent: "").target = self
         appMenu.addItem(withTitle: "Library", action: #selector(openSite), keyEquivalent: "l").target = self
         appMenu.addItem(withTitle: "Recordings Folder", action: #selector(openLibrary), keyEquivalent: "").target = self
         appMenu.addItem(.separator())
@@ -259,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             if NSApp.currentEvent?.type == .rightMouseUp {
                 let menu = NSMenu()
+                menu.addItem(withTitle: "Take Screenshot  ⌥⇧S", action: #selector(screenshotAction), keyEquivalent: "").target = self
                 if model.lastLink != nil {
                     menu.addItem(withTitle: "Copy Last Link", action: #selector(copyLastLink), keyEquivalent: "").target = self
                 }
@@ -285,6 +290,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: u.id.uuidString, content: c, trigger: nil))
     }
 
+    /// The bar and camera bubble step aside while the picker is open, so they never end up in the picture.
+    @MainActor func takeScreenshot() {
+        let barWasUp = bar.isVisible, bubbleWasUp = bubble.isVisible
+        bar.orderOut(nil); bubble.orderOut(nil)
+        model.screenshot { [weak self] in
+            if barWasUp { self?.bar.orderFrontRegardless() }
+            if bubbleWasUp { self?.bubble.orderFrontRegardless() }
+        }
+    }
+
+    @MainActor func notifyShot(link: URL?, error: String?) {
+        let c = UNMutableNotificationContent()
+        c.title = link != nil ? "Screenshot copied, with its link" : "Couldn't get a screenshot link"
+        c.body = link?.absoluteString ?? (error ?? "Something went wrong")
+        if let link { c.userInfo = ["link": link.absoluteString] }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
+    }
+
+    @objc func screenshotAction() { MainActor.assumeIsolated { takeScreenshot() } }
     @objc func copyLastLink() { MainActor.assumeIsolated { model.copyLink() } }
 
     @objc func openLibrary() {
@@ -294,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openSite() { NSWorkspace.shared.open(URL(string: "https://jack-clips.vercel.app/library")!) }
     @objc func showBarAction() { MainActor.assumeIsolated { showBar() } }
 
-    // ⌥⇧R starts and stops a recording from anywhere, ⌥⇧P pauses and resumes it. Carbon hot keys need no Accessibility grant.
+    // ⌥⇧R starts and stops a recording from anywhere, ⌥⇧P pauses and resumes it, ⌥⇧S takes a screenshot. Carbon hot keys need no Accessibility grant.
     private func registerHotKey() {
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(GetApplicationEventTarget(), { _, event, ctx in
@@ -304,6 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               nil, MemoryLayout<EventHotKeyID>.size, nil, &key)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    if key.id == 3 { me.takeScreenshot(); return }
                     if !me.bar.isVisible { me.showBar() }
                     if key.id == 2 { me.model.togglePause() } else { me.model.toggle() }
                 }
@@ -314,6 +339,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             GetApplicationEventTarget(), 0, &hotKey)
         RegisterEventHotKey(UInt32(kVK_ANSI_P), UInt32(optionKey | shiftKey), EventHotKeyID(signature: 0x434C5053, id: 2),
                             GetApplicationEventTarget(), 0, &pauseHotKey)
+        RegisterEventHotKey(UInt32(kVK_ANSI_S), UInt32(optionKey | shiftKey), EventHotKeyID(signature: 0x434C5053, id: 3),
+                            GetApplicationEventTarget(), 0, &shotHotKey)
     }
 }
 
