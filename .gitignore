@@ -12,3 +12,4 @@ api/_clips.json
 media/
 __pycache__/
 .deploy.log
+.ai.log

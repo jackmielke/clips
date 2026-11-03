@@ -53,4 +53,8 @@ if [ -f .env.r2 ] && [ -z "$SKIP_DEPLOY" ]; then
 elif [ -z "$SKIP_DEPLOY" ]; then
   npx --yes vercel@latest deploy --prod --yes >/dev/null
 fi
+# Transcript, AI title, summary and chapters, in the background so the link is ready at once (ai-clip.py).
+if [ -f .adminkey ] && [ -z "$SKIP_AI" ]; then
+  ( python3 ai-clip.py "$SLUG" ${3:+--force} --deploy ) > .ai.log 2>&1 &!
+fi
 echo "$ORIGIN/$SLUG"

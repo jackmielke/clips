@@ -22,6 +22,9 @@ export CLIPS_ORIGIN=https://your-project.vercel.app   # used for link previews
 ```
 Needs macOS, ffmpeg (with VideoToolbox), Python 3, Node, and the Vercel CLI. The Mac app expects the repo at `~/dev/clips` (`AppModel.repo`). Swap `public/jm-logo.png` for your own favicon.
 
+## AI title, summary and transcript
+Like Loom: every clip page gets a Summary tab (a short summary, key points and clickable chapters) and a Transcript tab (search, copy, every line seeks the video and the current line follows playback). `ai-clip.py <slug>` makes it on the Mac: whisper.cpp transcribes the audio locally (`brew install whisper-cpp`; the speech model downloads once to `~/.cache/clips`), then Claude writes the title, summary and chapters (Anthropic SDK with an API key, else the `claude` CLI). It is saved privately in Vercel Blob through `POST /api/ai` with `.adminkey`, and private clips keep their transcript private. A clip that was never renamed and still has its default name ("Recording · ...") gets the AI title, which you can still click to edit; a title you picked is never replaced. `add-clip.sh` runs it in the background after each post (log in `.ai.log`, `SKIP_AI=1` turns it off), and `./ai-clip.py --all --deploy` backfills older clips (`--force` redoes ones that have it, `--dry` only prints).
+
 ## Password gate
 `middleware.js` locks the home page, which lists every clip, behind one shared password: `fun` unless `SITE_PASSWORD` is set in Vercel. Share links (`/<slug>`, `/v/...`) stay open. Without the password the home page shows only the clips that browser has opened before (`public/seen.js` remembers them). A right answer is remembered for a year, and the owner key (`?key=` or the clipKey cookie) skips it.
 
