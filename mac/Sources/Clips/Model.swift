@@ -383,7 +383,16 @@ final class AppModel: ObservableObject {
                 self.shotTaken(file)
             }
         }
-        do { try p.run() } catch { shooting = false; done(); onShot?(nil, "Couldn't open the screenshot picker") }
+        // The ⌥⇧S hot key fires while ⌥ and ⇧ are still down, and the picker reads held keys as drag modifiers:
+        // ⌥ grows the box from its centre and ⇧ locks an edge. So wait (up to 2 s) for them to come up first.
+        Task {
+            let deadline = Date().addingTimeInterval(2)
+            while Date() < deadline,
+                  !CGEventSource.flagsState(.combinedSessionState).intersection([.maskAlternate, .maskShift]).isEmpty {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            do { try p.run() } catch { shooting = false; done(); onShot?(nil, "Couldn't open the screenshot picker") }
+        }
     }
 
     private func shotTaken(_ file: URL) {
