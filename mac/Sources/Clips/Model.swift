@@ -365,9 +365,9 @@ final class AppModel: ObservableObject {
     /// Called when a screenshot's link is ready (or why it isn't), for the notification.
     var onShot: ((URL?, String?) -> Void)?
 
-    /// Apple's own picker: drag a region, or press Space and click a window. The image is on the clipboard
-    /// right away; once it's uploaded, the clipboard holds the image and its link together, so chat apps
-    /// paste the picture and text fields paste the link. `done` runs when the picker closes.
+    /// Apple's own picker: drag a region, or press Space and click a window. The clipboard gets just the
+    /// image. It also uploads in the background, and the link waits in Copy Last Link (and the notification)
+    /// without touching the clipboard. `done` runs when the picker closes.
     func screenshot(done: @escaping () -> Void) {
         guard !shooting else { return }
         shooting = true
@@ -395,7 +395,6 @@ final class AppModel: ObservableObject {
         item.setData(png, forType: .png)
         if let tiff = image.tiffRepresentation { item.setData(tiff, forType: .tiff) }
         pb.writeObjects([item])
-        let copiedAt = pb.changeCount
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -417,16 +416,6 @@ final class AppModel: ObservableObject {
                     return
                 }
                 self.lastLink = link
-                // Only add the link if nothing else was copied while it uploaded.
-                if pb.changeCount == copiedAt {
-                    pb.clearContents()
-                    let both = NSPasteboardItem()
-                    both.setData(png, forType: .png)
-                    if let tiff = image.tiffRepresentation { both.setData(tiff, forType: .tiff) }
-                    both.setString(link.absoluteString, forType: .string)
-                    pb.writeObjects([both])
-                }
-                NSSound(named: "Glass")?.play()
                 self.onShot?(link, nil)
             }
         }

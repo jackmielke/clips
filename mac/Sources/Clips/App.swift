@@ -302,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor func notifyShot(link: URL?, error: String?) {
         let c = UNMutableNotificationContent()
-        c.title = link != nil ? "Screenshot copied, with its link" : "Couldn't get a screenshot link"
+        c.title = link != nil ? "Screenshot copied" : "Couldn't get a screenshot link"
         c.body = link?.absoluteString ?? (error ?? "Something went wrong")
         if let link { c.userInfo = ["link": link.absoluteString] }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
