@@ -51,6 +51,7 @@ final class BubbleView: NSView {
         preview.videoGravity = .resizeAspectFill
         layer?.addSublayer(preview)
         addSubview(hideButton)
+        watchSession(session)
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc private func hideTapped() { onHide?() }
@@ -66,9 +67,22 @@ final class BubbleView: NSView {
         hideButton.frame = NSRect(x: bounds.maxX - 40, y: bounds.maxY - 40, width: 28, height: 28)
         preview.frame = bounds
         layer?.cornerRadius = bounds.width * 70 / 600
-        if let c = preview.connection, c.isVideoMirroringSupported {
-            c.automaticallyAdjustsVideoMirroring = false
-            c.isVideoMirrored = true
+        applyMirror()
+    }
+    /// Show the camera like a mirror. Turning the camera on adds a fresh input, which gives the
+    /// preview a fresh connection with default (unmirrored) settings, so this has to run every time
+    /// that happens, not just on layout (which used to only come around on hover).
+    func applyMirror() {
+        guard let c = preview.connection, c.isVideoMirroringSupported else { return }
+        if c.automaticallyAdjustsVideoMirroring { c.automaticallyAdjustsVideoMirroring = false }
+        if !c.isVideoMirrored { c.isVideoMirrored = true }
+    }
+    private func watchSession(_ session: AVCaptureSession) {
+        let names: [Notification.Name] = [.AVCaptureSessionDidStartRunning, .AVCaptureInputPortFormatDescriptionDidChange]
+        for name in names {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyMirror() }
+            }
         }
     }
 }
@@ -230,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bubble.setFrame(NSRect(origin: origin, size: NSSize(width: side, height: side)), display: true)
         placingBubble = false
         model.cameraRect = normalized(bubble.frame, in: f)
+        (bubble.contentView as? BubbleView)?.applyMirror()
         if model.cameraOn && (bar.isVisible || isRecording) { bubble.orderFrontRegardless() } else { bubble.orderOut(nil) }
         countdown.setFrame(NSRect(x: f.midX - 200, y: f.midY - 200, width: 400, height: 400), display: true)
         userMovedBar = false
