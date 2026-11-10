@@ -318,7 +318,7 @@ struct ShotCard: View {
 // MARK: - Markup
 
 enum MarkTool: String, CaseIterable {
-    case arrow, oval, box, pen, text
+    case pen, arrow, oval, box, text
     var icon: String {
         switch self {
         case .arrow: "arrow.up.right"
@@ -352,7 +352,7 @@ struct Mark {
 final class MarkupDoc: ObservableObject {
     let image: NSImage
     let pixel: CGSize
-    @Published var tool: MarkTool = .arrow
+    @Published var tool: MarkTool = .pen
     @Published var color: NSColor = .systemRed
     @Published var marks: [Mark] = []
     /// Line width that reads well at any size: about 0.4% of the long side, never thinner than 4 px.
