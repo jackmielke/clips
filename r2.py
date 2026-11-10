@@ -70,8 +70,9 @@ def put(env, file, key):
                                               'application/vnd.apple.mpegurl' if file.endswith('.m3u8') else
                                               'application/octet-stream')
     with open(file, 'rb') as f:
-        # Clip pages can be replaced in place (add-clip.sh with an existing slug); videos never change.
-        cache = 'no-cache' if file.endswith('.html') else 'public, max-age=31536000, immutable'
+        # Clip pages and screenshots can be replaced in place (add-clip.sh with an existing slug, a markup
+        # re-uploaded by shot.sh), so they revalidate; videos never change.
+        cache = 'no-cache' if file.endswith('.html') or key.startswith('s/') else 'public, max-age=31536000, immutable'
         request(env, 'PUT', key, headers={'content-type': ctype, 'cache-control': cache},
                 body_file=f, size=os.path.getsize(file))
 

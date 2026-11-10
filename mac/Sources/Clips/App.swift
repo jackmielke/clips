@@ -82,6 +82,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var hotKey: EventHotKeyRef?
     var pauseHotKey: EventHotKeyRef?
     var shotHotKey: EventHotKeyRef?
+    let shots = MainActor.assumeIsolated { ShotStore() }
+    var preview: FloatingPanel?
+    var previewHide: Task<Void, Never>?
+    var markups: [String: NSWindow] = [:]
+    var gallery: NSWindow?
     var subs = Set<AnyCancellable>()
     var userMovedBar = false
 
@@ -150,6 +155,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         model.onPosted = { [weak self] u, link, error in self?.notifyPosted(u, link: link, error: error) }
         model.onShot = { [weak self] link, error in self?.notifyShot(link: link, error: error) }
+        model.onShotFile = { [weak self] file in
+            guard let self else { return }
+            self.showPreview(self.shots.add(file).slug)
+        }
+        shots.onUploaded = { [weak self] s in self?.model.lastLink = s.link }
+        shots.onFailed = { [weak self] _, why in
+            self?.notifyShot(link: nil, error: "The image is on your clipboard, but the upload failed: \(why)")
+        }
         model.$uploads.sink { [weak self] _ in
             DispatchQueue.main.async { self?.phaseChanged(self?.model.phase ?? .idle) }
         }.store(in: &subs)
@@ -172,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Show Recording Bar", action: #selector(showBarAction), keyEquivalent: "n").target = self
         appMenu.addItem(withTitle: "Take Screenshot", action: #selector(screenshotAction), keyEquivalent: "").target = self
+        appMenu.addItem(withTitle: "Screenshots…", action: #selector(galleryAction), keyEquivalent: "").target = self
         appMenu.addItem(withTitle: "Library", action: #selector(openSite), keyEquivalent: "l").target = self
         appMenu.addItem(withTitle: "Recordings Folder", action: #selector(openLibrary), keyEquivalent: "").target = self
         appMenu.addItem(.separator())
@@ -264,6 +278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if NSApp.currentEvent?.type == .rightMouseUp {
                 let menu = NSMenu()
                 menu.addItem(withTitle: "Take Screenshot  ⌥⇧S", action: #selector(screenshotAction), keyEquivalent: "").target = self
+                menu.addItem(withTitle: "Screenshots…", action: #selector(galleryAction), keyEquivalent: "").target = self
                 if model.lastLink != nil {
                     menu.addItem(withTitle: "Copy Last Link", action: #selector(copyLastLink), keyEquivalent: "").target = self
                 }
@@ -292,6 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The bar and camera bubble step aside while the picker is open, so they never end up in the picture.
     @MainActor func takeScreenshot() {
+        closePreview()
         let barWasUp = bar.isVisible, bubbleWasUp = bubble.isVisible
         bar.orderOut(nil); bubble.orderOut(nil)
         model.screenshot { [weak self] in
@@ -309,6 +325,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func screenshotAction() { MainActor.assumeIsolated { takeScreenshot() } }
+    @objc func galleryAction() { MainActor.assumeIsolated { showGallery() } }
+
+    // MARK: Screenshot preview, markup and list
+
+    /// The little card in the bottom-right corner after a capture: Mark up, Copy link, All.
+    /// It goes away by itself after a few seconds, but stays while the mouse is on it.
+    @MainActor func showPreview(_ slug: String) {
+        closePreview()
+        let view = ShotPreview(
+            store: shots, slug: slug,
+            edit: { [weak self] in
+                self?.closePreview()
+                if let s = self?.shots.shot(slug) { self?.openMarkup(s) }
+            },
+            all: { [weak self] in self?.closePreview(); self?.showGallery() },
+            close: { [weak self] in self?.closePreview() },
+            hover: { [weak self] inside in
+                if inside { self?.previewHide?.cancel() } else { self?.schedulePreviewHide() }
+            })
+        let host = NSHostingView(rootView: view)
+        let size = host.fittingSize
+        let panel = FloatingPanel(size: size, movable: false)
+        panel.contentView = host
+        let v = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
+        panel.setFrameOrigin(NSPoint(x: v.maxX - size.width - 6, y: v.minY + 6))
+        panel.orderFrontRegardless()
+        preview = panel
+        schedulePreviewHide()
+    }
+
+    @MainActor func schedulePreviewHide() {
+        previewHide?.cancel()
+        previewHide = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            self?.closePreview()
+        }
+    }
+
+    @MainActor func closePreview() {
+        previewHide?.cancel()
+        preview?.orderOut(nil)
+        preview = nil
+    }
+
+    /// Opens a markup window. Save overwrites the png, puts it on the clipboard and re-uploads it to the same link.
+    @MainActor func openMarkup(_ shot: Shot) {
+        if let w = markups[shot.slug] { NSApp.activate(); w.makeKeyAndOrderFront(nil); return }
+        guard let doc = MarkupDoc(file: shot.url) else { return }
+        let slug = shot.slug
+        let canvas = MarkupCanvas(doc: doc)
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let v = screen.visibleFrame, scale = screen.backingScaleFactor
+        let natural = NSSize(width: doc.pixel.width / scale, height: doc.pixel.height / scale)
+        let fit = min(1, v.width * 0.85 / natural.width, (v.height * 0.85 - 50) / natural.height)
+        let size = NSSize(width: max(760, natural.width * fit), height: max(420, natural.height * fit + 50))
+        let win = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        win.title = "Mark up screenshot"
+        win.isReleasedWhenClosed = false
+        win.contentView = NSHostingView(rootView: MarkupEditor(
+            doc: doc, canvas: canvas,
+            save: { [weak self, weak win] in
+                canvas.commitText()
+                guard let self else { return }
+                if !doc.marks.isEmpty, let png = doc.render() {
+                    self.shots.replace(slug, png: png)
+                    AppModel.copyImage(png)
+                }
+                win?.close()
+                self.showPreview(slug)
+            },
+            cancel: { [weak win] in win?.close() }))
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: win, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.markups[slug] = nil }
+        }
+        markups[slug] = win
+        win.center()
+        NSApp.activate()
+        win.makeKeyAndOrderFront(nil)
+        win.makeFirstResponder(canvas)
+    }
+
+    /// Every screenshot, newest first, each with Mark up, Copy link and Open.
+    @MainActor func showGallery() {
+        if gallery == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 620),
+                             styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+            w.title = "Screenshots"
+            w.isReleasedWhenClosed = false
+            w.contentView = NSHostingView(rootView: ShotsGallery(
+                store: shots,
+                edit: { [weak self] s in self?.openMarkup(s) },
+                take: { [weak self] in self?.takeScreenshot() }))
+            w.center()
+            gallery = w
+        }
+        NSApp.activate()
+        gallery?.makeKeyAndOrderFront(nil)
+    }
     @objc func copyLastLink() { MainActor.assumeIsolated { model.copyLink() } }
 
     @objc func openLibrary() {
