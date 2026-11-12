@@ -16,6 +16,12 @@ struct Shot: Codable, Identifiable, Equatable {
     var id: String { slug }
     var url: URL { URL(fileURLWithPath: file) }
     var link: URL { URL(string: "\(ShotStore.origin)/s/\(slug)")! }
+    /// The png itself, like the thumbnail macOS shows after a screenshot: drop it into Slack, Messages, Mail, Finder, a browser.
+    var dragItem: NSItemProvider {
+        let item = NSItemProvider(contentsOf: url) ?? NSItemProvider()
+        item.suggestedName = url.deletingPathExtension().lastPathComponent
+        return item
+    }
 }
 
 @MainActor
@@ -181,7 +187,8 @@ struct ShotPreview: View {
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.white.opacity(0.12)))
                     .contentShape(Rectangle())
                     .onTapGesture(perform: edit)
-                    .help("Mark it up")
+                    .onDrag { s.dragItem }
+                    .help("Drag it into any app, or click to mark it up")
                 HStack(spacing: 6) {
                     Circle().fill(store.failed[slug] != nil ? Color.red : store.uploading.contains(slug) ? Color.yellow : Color.green)
                         .frame(width: 7, height: 7)
@@ -289,7 +296,8 @@ struct ShotCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .contentShape(Rectangle())
                 .onTapGesture(perform: edit)
-                .help("Mark it up")
+                .onDrag { shot.dragItem }
+                .help("Drag it into any app, or click to mark it up")
             HStack {
                 Text(shot.date, format: .dateTime.month(.abbreviated).day().hour().minute())
                     .font(.system(size: 12, weight: .semibold))
