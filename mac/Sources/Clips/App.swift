@@ -208,6 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = menu
 
         registerHotKey()
+        watchSecureInput()
         model.applyCamera()
         layout()
         bar.orderFrontRegardless()
@@ -274,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.button?.image = NSImage(systemSymbolName: recording ? "record.circle.fill" : "record.circle",
                                        accessibilityDescription: "Clips")
         status.button?.contentTintColor = recording ? .systemRed : nil
+        status.button?.toolTip = nil
     }
 
     @MainActor func hideBar() {
@@ -292,6 +294,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             if NSApp.currentEvent?.type == .rightMouseUp {
                 let menu = NSMenu()
+                if let app = secureInputApp {
+                    menu.addItem(withTitle: "⌥⇧ shortcuts blocked: \(app.localizedName ?? "an app") has secure typing on",
+                                 action: #selector(showSecureInputApp), keyEquivalent: "").target = self
+                    menu.addItem(.separator())
+                }
                 menu.addItem(withTitle: "Take Screenshot  ⌥⇧S", action: #selector(screenshotAction), keyEquivalent: "").target = self
                 menu.addItem(withTitle: "Screenshots…", action: #selector(galleryAction), keyEquivalent: "").target = self
                 if model.lastLink != nil {
@@ -448,6 +455,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func openSite() { NSWorkspace.shared.open(URL(string: "https://jack-clips.vercel.app/library")!) }
     @objc func showBarAction() { MainActor.assumeIsolated { showBar() } }
+
+    // MARK: Secure typing
+    // While any app has secure event input on (a focused password field, or Chrome leaving it on after one),
+    // macOS swallows hot keys that use only ⌥ and ⇧, so ⌥⇧R/P/S silently do nothing. Watch for it and say so.
+    var secureInputApp: NSRunningApplication?
+    private var secureSince: Date?
+    private var warnedPID: pid_t = 0
+
+    private func watchSecureInput() {
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkSecureInput() }
+        }
+    }
+
+    @MainActor private func checkSecureInput() {
+        let info = CGSessionCopyCurrentDictionary() as? [String: Any]
+        let pid = (info?["kCGSSessionSecureInputPID"] as? NSNumber)?.int32Value ?? 0
+        let app = pid > 0 && pid != getpid() ? NSRunningApplication(processIdentifier: pid) : nil
+        guard let app else {
+            if secureInputApp != nil { secureInputApp = nil; phaseChanged(model.phase) }
+            secureSince = nil; warnedPID = 0
+            return
+        }
+        if secureInputApp?.processIdentifier != pid { secureInputApp = app; secureSince = Date() }
+        status.button?.toolTip = "⌥⇧ shortcuts blocked: \(app.localizedName ?? "an app") has secure typing on"
+        if !isRecording { status.button?.contentTintColor = .systemOrange }
+        // Typing a password takes a few seconds; still on after 20 s means it's stuck, so say it once.
+        if let since = secureSince, Date().timeIntervalSince(since) > 20, warnedPID != pid {
+            warnedPID = pid
+            let c = UNMutableNotificationContent()
+            c.title = "Clips shortcuts are blocked"
+            c.body = "\(app.localizedName ?? "Another app") has secure typing on, so ⌥⇧S, ⌥⇧R and ⌥⇧P can't get through. Click out of its password field, or quit and reopen it."
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "secure-input", content: c, trigger: nil))
+        }
+    }
+
+    @objc func showSecureInputApp() { secureInputApp?.activate() }
 
     // ⌥⇧R starts and stops a recording from anywhere, ⌥⇧P pauses and resumes it, ⌥⇧S takes a screenshot. Carbon hot keys need no Accessibility grant.
     private func registerHotKey() {
