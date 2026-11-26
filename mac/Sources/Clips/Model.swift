@@ -229,6 +229,8 @@ final class AppModel: ObservableObject {
     @Published var uploads: [Upload] = []
     /// Called when an upload finishes: the link, or nil and why it failed.
     var onPosted: ((Upload, URL?, String?) -> Void)?
+    /// The bar's play button on a clip that's still posting.
+    var onWatch: ((Upload) -> Void)?
 
     private func enqueue(_ folder: URL, title: String) {
         uploads.append(Upload(folder: folder, title: title))

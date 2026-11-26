@@ -101,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var previewHide: Task<Void, Never>?
     var markups: [String: NSWindow] = [:]
     var gallery: NSWindow?
+    var previews: [NSWindow] = []
     var subs = Set<AnyCancellable>()
     var userMovedBar = false
 
@@ -169,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         model.onPosted = { [weak self] u, link, error in self?.notifyPosted(u, link: link, error: error) }
+        model.onWatch = { [weak self] u in self?.watch(u) }
         model.onShot = { [weak self] link, error in self?.notifyShot(link: link, error: error) }
         model.onShotFile = { [weak self] file in
             guard let self else { return }
