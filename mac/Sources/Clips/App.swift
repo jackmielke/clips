@@ -104,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var subs = Set<AnyCancellable>()
     var userMovedBar = false
 
-    /// clips://toggle, clips://start, clips://stop, clips://pause, clips://shot, clips://show — for Raycast, Shortcuts, voice, and Claude.
+    /// clips://toggle, clips://start, clips://stop, clips://save (finish without posting), clips://pause, clips://shot, clips://show — for Raycast, Shortcuts, voice, and Claude.
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
             for url in urls {
@@ -113,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "toggle": model.toggle()
                 case "start": if case .recording = model.phase {} else { model.startCountdown() }
                 case "stop": if case .recording = model.phase { model.stop() }
+                case "save": if case .recording = model.phase { model.stop(post: false) }
                 case "pause": model.togglePause()
                 default: break
                 }

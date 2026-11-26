@@ -12,6 +12,7 @@ CAM = 600            # facecam square size in px
 CAM_RADIUS = 70
 CAM_MARGIN = 60
 RING_SECS = 0.3
+SYSTEM_VOLUME = 0.5  # computer/game audio level when the recording does not say (Screen Studio projects)
 # The mic's timestamps can be off from the camera's by a fixed amount (0.76s on one recording), so on
 # a Mac the render measures lip sync itself (avsync.py) and moves the mic to match. MIC_DELAY=<secs>
 # overrides that by hand; MIC_DELAY=0 turns it off.
@@ -65,7 +66,11 @@ def mic_delay(rec):
 def main(project, out):
     rec = os.path.join(project, 'recording')
     p = lambda name: os.path.join(rec, name)
-    meta = {r['id']: r for r in json.load(open(p('metadata.json')))['recorders']}
+    metadata = json.load(open(p('metadata.json')))
+    meta = {r['id']: r for r in metadata['recorders']}
+    # Mix levels set in the Clips app. Computer and game audio default to half so voices sit on top.
+    levels = metadata.get('audio', {})
+    vol = {'channel-1': float(levels.get('systemVolume', SYSTEM_VOLUME)), 'channel-3': float(levels.get('micVolume', 1.0))}
     start = meta['channel-2-display']['sessions'][0]['processTimeStartMs']
     # The Clips recorder may scale its display track; event coords stay in points.
     W, H, dur = probe(p('channel-2-display-0.mp4'))
@@ -167,11 +172,13 @@ def main(project, out):
         for i, f in enumerate(audio):
             late = offset(p(f)) + (sync if f.startswith('channel-3') else 0)
             cut = f'atrim=start={-late:.3f},asetpts=PTS-STARTPTS,' if late < 0 else ''
-            g.append(f'[{a0 + i}:a]{cut}adelay={round(max(0, late) * 1000)}:all=1,apad=whole_dur={dur:.3f}[a{i}]')
+            g.append(f'[{a0 + i}:a]{cut}volume={vol[f[:9]]:.3f},adelay={round(max(0, late) * 1000)}:all=1,'
+                     f'apad=whole_dur={dur:.3f}[a{i}]')
+        # The limiter catches peaks when loud game audio and a voice land together, instead of clipping.
         if len(audio) == 2:
-            g.append('[a0][a1]amix=inputs=2:normalize=0:duration=longest[a]')
+            g.append('[a0][a1]amix=inputs=2:normalize=0:duration=longest,alimiter=limit=0.95:level=disabled[a]')
         else:
-            g[-1] = g[-1][:-4] + '[a]'
+            g[-1] = g[-1][:-4] + ',alimiter=limit=0.95:level=disabled[a]'
         maps += ['-map', '[a]']
     print(f'DURATION {dur:.2f}', flush=True)
 

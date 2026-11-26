@@ -51,6 +51,7 @@ struct ControlBar: View {
                    pick: { m.micID = $0; m.micOn = true }, toggle: { m.micOn.toggle() })
         IconButton(icon: m.systemAudioOn ? "speaker.wave.2.fill" : "speaker.slash.fill", on: m.systemAudioOn,
                    help: m.systemAudioOn ? "Computer audio on" : "Computer audio off") { m.systemAudioOn.toggle() }
+        AudioLevels(m: m)
 
         Sep()
 
@@ -175,6 +176,39 @@ struct ControlBar: View {
 
     private func shortName(_ s: String) -> String {
         s.replacingOccurrences(of: "Built-in ", with: "").replacingOccurrences(of: " Display", with: "")
+    }
+}
+
+// MARK: - Audio levels
+
+/// Mix levels for computer audio and the mic, applied when the clip is rendered.
+struct AudioLevels: View {
+    @ObservedObject var m: AppModel
+    @State private var open = false
+    var body: some View {
+        IconButton(icon: "slider.horizontal.3", on: true, help: "Audio levels", dim: true) { open.toggle() }
+            .popover(isPresented: $open, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 12) {
+                    level("Computer audio", icon: "speaker.wave.2.fill", value: $m.systemVolume, enabled: m.systemAudioOn)
+                    level("Microphone", icon: "mic.fill", value: $m.micVolume, enabled: m.micOn)
+                    Button("Reset") { m.systemVolume = 0.5; m.micVolume = 1.0 }
+                        .buttonStyle(.link).font(.system(size: 11))
+                }
+                .padding(14).frame(width: 260)
+            }
+    }
+
+    private func level(_ title: String, icon: String, value: Binding<Double>, enabled: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Label(title, systemImage: icon).font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text("\(Int((value.wrappedValue * 100).rounded()))%").font(.system(size: 12)).monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: value, in: 0...1, step: 0.05)
+        }
+        .opacity(enabled ? 1 : 0.4)
     }
 }
 

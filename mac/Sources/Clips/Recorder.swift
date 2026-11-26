@@ -89,6 +89,8 @@ final class TrackWriter {
     /// timestamps, so a buffer that never arrives (or that the writer refuses) would pull everything
     /// after it earlier and the voice slowly runs ahead of the picture. Holes get filled with silence.
     private var nextAudio: CMTime?
+    /// Samples the writer wasn't ready for. Saved to metadata.json so a glitchy clip says why.
+    private(set) var dropped = 0
 
     init(url: URL, type: AVFileType, input: AVAssetWriterInput) throws {
         try? FileManager.default.removeItem(at: url)
@@ -107,7 +109,7 @@ final class TrackWriter {
             writer.startSession(atSourceTime: start)
             started = true
         }
-        guard writer.status == .writing, input.isReadyForMoreMediaData else { return }
+        guard writer.status == .writing, input.isReadyForMoreMediaData else { dropped += 1; return }
         guard input.mediaType == .audio, let asbd = sb.formatDescription?.audioStreamBasicDescription else {
             input.append(sb); return
         }
@@ -174,6 +176,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         var mic: AVCaptureDevice?
         var systemAudio: Bool
         var cameraRect: CGRect?
+        /// Mix levels, 0...1, applied when the clip is rendered (the raw tracks stay untouched).
+        var systemVolume: Double = 0.5
+        var micVolume: Double = 1.0
     }
 
     let folder: URL
@@ -188,9 +193,13 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private var displayID: CGDirectDisplayID = 0
     private var pointWidth: CGFloat = 0
     private var cameraRect: CGRect?
+    private var volumes = (system: 0.5, mic: 1.0)
     private let mouse = MouseLogger()
     private let pauses = PauseClock()
-    private let screenQ = DispatchQueue(label: "clips.screen"), audioQ = DispatchQueue(label: "clips.sysaudio")
+    // A game or a busy browser can hog the Mac; at default priority our capture callbacks lost out
+    // and whole seconds of screen, camera and mic went missing. Capture runs at the top QoS.
+    private let screenQ = DispatchQueue(label: "clips.screen", qos: .userInteractive)
+    private let audioQ = DispatchQueue(label: "clips.sysaudio", qos: .userInteractive)
     var onStreamError: ((String) -> Void)?
     static let fps: Int32 = 30
     static let maxCaptureSide: CGFloat = 2560
@@ -229,7 +238,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         cfg.minimumFrameInterval = CMTime(value: 1, timescale: Self.fps)
         cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         cfg.showsCursor = false               // redrawn from the mouse log, bigger and smoother
-        cfg.queueDepth = 5
+        cfg.queueDepth = 8                    // more slack before frames drop when the Mac is busy
         cfg.capturesAudio = o.systemAudio
         cfg.excludesCurrentProcessAudio = true
         cfg.sampleRate = 48000
@@ -246,12 +255,15 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
             sysW = try TrackWriter(url: rec.appendingPathComponent("channel-1-system-audio-0.m4a"), type: .m4a,
                                    input: AVAssetWriterInput(mediaType: .audio, outputSettings: aac(channels: 2)))
         }
-        if let cam = o.camera {
-            let d = CMVideoFormatDescriptionGetDimensions(cam.activeFormat.formatDescription)
+        if o.camera != nil {
+            // Encode at the size the camera output actually delivers. This used to read activeFormat
+            // (1080p), so every 720p frame got scaled back up and encoded at nearly twice the pixels.
+            let d = camera.outputSize
             camW = try TrackWriter(url: rec.appendingPathComponent("channel-4-webcam-0.mp4"), type: .mp4,
                 input: AVAssetWriterInput(mediaType: .video, outputSettings: [
-                    AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Int(d.width), AVVideoHeightKey: Int(d.height),
-                    AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 5_000_000,
+                    AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: d.width, AVVideoHeightKey: d.height,
+                    AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 3_000_000,
+                                                      AVVideoExpectedSourceFrameRateKey: 30,
                                                       AVVideoAllowFrameReorderingKey: false]]))
         }
         if o.mic != nil {
@@ -260,6 +272,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
         }
 
         cameraRect = o.cameraRect
+        volumes = (o.systemVolume, o.micVolume)
         displayID = display.displayID
 
         camera.recordingSink = self
@@ -319,7 +332,12 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate,
 
     private func writeMetadata(durationMs: Double) {
         let session: [String: Any] = ["processTimeStartMs": 0, "durationMs": durationMs]
-        let meta: [String: Any] = ["recorder": "Clips 1.0", "recorders": [
+        let dropped = ["screen": screenW?.dropped, "systemAudio": sysW?.dropped,
+                       "camera": camW?.dropped, "mic": micW?.dropped].compactMapValues { $0 }
+        let meta: [String: Any] = ["recorder": "Clips 1.0",
+                                   "audio": ["systemVolume": volumes.system, "micVolume": volumes.mic],
+                                   "droppedSamples": dropped,
+                                   "recorders": [
             ["id": "channel-2-display", "configuration": ["pointWidth": pointWidth], "sessions": [session]],
             ["id": "channel-0-input", "sessions": [session]],
         ] + (cameraRect.map { r in [["id": "channel-4-webcam", "configuration": ["x": r.minX, "y": r.minY, "size": r.width], "sessions": [session]]] } ?? [])]
@@ -370,9 +388,11 @@ final class CameraController: NSObject {
     private let audioOut = AVCaptureAudioDataOutput()
     private var camInput: AVCaptureDeviceInput?
     private var micInput: AVCaptureDeviceInput?
-    private let q = DispatchQueue(label: "clips.camera")
+    private let q = DispatchQueue(label: "clips.camera", qos: .userInteractive)
     /// The mic gets its own queue so a slow camera frame can never hold up (and drop) audio.
-    private let micQ = DispatchQueue(label: "clips.mic")
+    private let micQ = DispatchQueue(label: "clips.mic", qos: .userInteractive)
+    /// What the video output delivers: the camera scaled to fit 1280x720, keeping its shape.
+    private(set) var outputSize = (width: 1280, height: 720)
     weak var recordingSink: (AVCaptureVideoDataOutputSampleBufferDelegate & AVCaptureAudioDataOutputSampleBufferDelegate)? {
         didSet {
             videoOut.setSampleBufferDelegate(recordingSink, queue: q)
@@ -399,6 +419,12 @@ final class CameraController: NSObject {
         if let i = camInput { session.removeInput(i); camInput = nil }
         if let d = device, let i = try? AVCaptureDeviceInput(device: d), session.canAddInput(i) {
             session.addInput(i); camInput = i
+            let dim = CMVideoFormatDescriptionGetDimensions(d.activeFormat.formatDescription)
+            let fit = min(1, 1280 / Double(max(dim.width, 1)), 720 / Double(max(dim.height, 1)))
+            outputSize = (Int(Double(dim.width) * fit) & ~1, Int(Double(dim.height) * fit) & ~1)
+            videoOut.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                                      kCVPixelBufferWidthKey as String: outputSize.width,
+                                      kCVPixelBufferHeightKey as String: outputSize.height]
         }
         session.commitConfiguration()
         updateRunning()

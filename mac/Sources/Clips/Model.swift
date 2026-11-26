@@ -40,6 +40,9 @@ final class AppModel: ObservableObject {
     @Published var micOn: Bool { didSet { save() } }
     @Published var micID: String { didSet { save() } }
     @Published var systemAudioOn: Bool { didSet { save() } }
+    /// Mix levels for the finished clip. Game and computer audio start at half so voices stay on top.
+    @Published var systemVolume: Double { didSet { save() } }
+    @Published var micVolume: Double { didSet { save() } }
 
     let camera = CameraController()
     /// Where the bubble sits on screen right now (top-left fractions); the video puts the camera there too.
@@ -64,6 +67,8 @@ final class AppModel: ObservableObject {
         micOn = d.object(forKey: "micOn") as? Bool ?? true
         micID = d.string(forKey: "micID") ?? ""
         systemAudioOn = d.object(forKey: "systemAudioOn") as? Bool ?? true
+        systemVolume = d.object(forKey: "systemVolume") as? Double ?? 0.5
+        micVolume = d.object(forKey: "micVolume") as? Double ?? 1.0
         refreshDevices()
         if !displays.contains(where: { $0.displayID == displayID }) { displayID = NSScreen.main?.displayID ?? 0 }
         NotificationCenter.default.addObserver(forName: AVCaptureDevice.wasConnectedNotification, object: nil, queue: .main) { [weak self] _ in
@@ -79,6 +84,7 @@ final class AppModel: ObservableObject {
         d.set(cameraOn, forKey: "cameraOn"); d.set(cameraID, forKey: "cameraID")
         d.set(micOn, forKey: "micOn"); d.set(micID, forKey: "micID")
         d.set(systemAudioOn, forKey: "systemAudioOn")
+        d.set(systemVolume, forKey: "systemVolume"); d.set(micVolume, forKey: "micVolume")
     }
 
     func refreshDevices() {
@@ -149,7 +155,8 @@ final class AppModel: ObservableObject {
                                       camera: cameraOn ? camera.cameraDevice : nil,
                                       mic: micOn ? selectedMic : nil,
                                       systemAudio: systemAudioOn,
-                                      cameraRect: cameraOn ? cameraRect : nil))
+                                      cameraRect: cameraOn ? cameraRect : nil,
+                                      systemVolume: systemVolume, micVolume: micVolume))
             return r
         } catch {
             await r.cancel()
@@ -195,7 +202,10 @@ final class AppModel: ObservableObject {
     }
 
     /// Finish goes straight back to the Record button; saving and posting carry on in the background.
-    func stop() {
+    func stop() { stop(post: true) }
+
+    /// post: false saves the recording to ~/Movies/Clips without rendering or posting it (for tests).
+    func stop(post: Bool) {
         guard let r = recorder else { return }
         recorder = nil
         pausedSince = nil
@@ -204,7 +214,7 @@ final class AppModel: ObservableObject {
         let title = "Recording · " + Self.titleStamp.string(from: Date())
         Task {
             let folder = await r.finish()
-            enqueue(folder, title: title)
+            if post { enqueue(folder, title: title) }
         }
     }
 
