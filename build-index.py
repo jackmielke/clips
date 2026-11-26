@@ -8,7 +8,7 @@ clips.sort(key=lambda c: c.get('created', ''), reverse=True)
 def dur(s): return f"{s // 60}:{s % 60:02d}"
 cards = []
 for c in clips:
-    t = html.escape(c['title']); d = c.get('created', '')[:10]
+    t = html.escape(c['title']); d = c.get('created', '')
     portrait = c.get('h', 9) > c.get('w', 16)
     cards.append(f'''<a class="card{' tall' if portrait else ''}" href="/{c['slug']}" data-slug="{c['slug']}">
   <div class="thumb"><img src="/v/{c['slug']}/poster.jpg" alt="" loading="lazy"><span class="dur">{dur(c['secs'])}</span></div>
@@ -49,7 +49,13 @@ page = f'''<!doctype html>
   j.private.forEach(s => document.querySelector('[data-slug="' + s + '"]')?.remove());
   const n = document.querySelectorAll('.card').length; document.getElementById('count').textContent = n + (n === 1 ? ' video' : ' videos');
 }}).catch(() => {{}}).finally(() => document.getElementById('grid').classList.remove('wait'));</script>
-<script>document.querySelectorAll('[data-d]').forEach(e => {{ try {{ e.textContent = new Date(e.dataset.d + 'T12:00:00').toLocaleDateString(undefined, {{ month: 'short', day: 'numeric', year: 'numeric' }}); }} catch (x) {{}} }});</script>
+<script>/* date and time of day, in the viewer's own time zone */
+document.querySelectorAll('[data-d]').forEach(e => {{ try {{
+  const v = e.dataset.d, hasTime = v.includes('T'), t = new Date(hasTime ? v : v + 'T12:00:00');
+  if (isNaN(t)) return;
+  const day = t.toLocaleDateString(undefined, {{ month: 'short', day: 'numeric', year: 'numeric' }});
+  e.textContent = hasTime ? day + ' · ' + t.toLocaleTimeString(undefined, {{ hour: 'numeric', minute: '2-digit' }}) : day;
+}} catch (x) {{}} }});</script>
 </body></html>'''
 open(os.path.join(root, 'public/index.html'), 'w').write(page)
 print(len(clips), 'clips on the home page')
