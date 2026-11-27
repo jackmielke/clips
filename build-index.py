@@ -41,7 +41,7 @@ page = f'''<!doctype html>
   .grid.wait {{ opacity:0; }} .grid {{ transition:opacity .2s; }}
 </style></head>
 <body><main>
-<header><img src="/jm-logo.png" alt=""><h1>Clips</h1><span class="count" id="count">{len(clips)} videos</span></header>
+<header><img src="/jm-logo.png" alt=""><h1>Clips</h1><span class="count" id="count">{len(clips)} videos</span><a id="lib" href="/library" hidden style="color:inherit;font-size:14px;font-weight:600">Library · favorites &amp; tags</a></header>
 <div class="grid wait" id="grid">
 {chr(10).join(cards)}
 </div></main>
@@ -49,6 +49,7 @@ page = f'''<!doctype html>
   j.private.forEach(s => document.querySelector('[data-slug="' + s + '"]')?.remove());
   const n = document.querySelectorAll('.card').length; document.getElementById('count').textContent = n + (n === 1 ? ' video' : ' videos');
 }}).catch(() => {{}}).finally(() => document.getElementById('grid').classList.remove('wait'));</script>
+<script>try {{ if (localStorage.getItem('clipKey')) document.getElementById('lib').hidden = false; }} catch (e) {{}}</script>
 <script>/* date and time of day, in the viewer's own time zone */
 document.querySelectorAll('[data-d]').forEach(e => {{ try {{
   const v = e.dataset.d, hasTime = v.includes('T'), t = new Date(hasTime ? v : v + 'T12:00:00');

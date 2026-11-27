@@ -28,4 +28,21 @@
     show();
   };
   actions.prepend(btn);
+
+  // Favorite star (also shown and filterable in /library, along with tags).
+  const org = await fetch('/api/organize', { headers: auth }).then((r) => r.json()).catch(() => null);
+  if (!org) return;
+  let fav = !!org.clips[slug]?.fav;
+  const star = document.createElement('button');
+  star.className = 'btn';
+  const showStar = () => { star.textContent = fav ? '★ Favorite' : '☆ Favorite'; star.title = fav ? 'Remove from favorites' : 'Add to favorites'; };
+  showStar();
+  star.onclick = async () => {
+    star.disabled = true;
+    const r = await fetch('/api/organize', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ slug, fav: !fav }) }).catch(() => null);
+    if (r && r.ok) fav = !fav;
+    star.disabled = false;
+    showStar();
+  };
+  actions.prepend(star);
 })();
