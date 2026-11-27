@@ -61,7 +61,7 @@
     const params = new URLSearchParams(location.search);
     let key = params.get('key');
     try { if (key) localStorage.setItem('clipKey', key); else key = localStorage.getItem('clipKey'); } catch (e) {}
-    if (params.has('key')) history.replaceState(null, '', location.pathname);
+    if (params.has('key')) { params.delete('key'); history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '')); }
     return key;
   }
 
@@ -87,6 +87,8 @@
     const bySlug = Object.fromEntries(clips.map((c) => [c.slug, c]));
     let filter = 'all';
     try { filter = localStorage.getItem('libFilter') || 'all'; } catch (e) {}
+    const urlTag = new URLSearchParams(location.search).get('tag');
+    if (urlTag) filter = urlTag === 'favorites' ? 'fav' : 'tag:' + urlTag.toLowerCase();
     const save = (slug, body) => fetch('/api/organize', { method: 'POST', headers: auth, body: JSON.stringify({ slug, ...body }) }).then((r) => r.ok).catch(() => false);
     const shown = () => clips.filter((c) => filter === 'all' || (filter === 'fav' ? c.fav : c.tags.includes(filter.slice(4))));
 
